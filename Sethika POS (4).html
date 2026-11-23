@@ -1,0 +1,773 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Sethika POS</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: dark-blue top bar like S7POS; left cart pane + right product catalog; tabs for stock, history, report, settings */
+:root{
+  --bg:#eaf0f8; --panel:#ffffff; --panel2:#f3f6fb; --fg:#1b2638; --muted:#5f6e88; --line:#d6dfec;
+  --brand:#1e3a78; --brand-fg:#ffffff; --brand2:#2f64c4; --ok:#1c9a62; --warn:#d98314; --bad:#d3435b; --accent:#f08a24;
+  --tile:#eef3fb; --shadow:0 1px 2px rgba(20,40,80,.08);
+  --font:"Kantumruy Pro","Noto Sans Khmer","Khmer OS",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e1523; --panel:#17212f; --panel2:#1d293b; --fg:#e5ebf6; --muted:#93a0b8; --line:#2a3850;
+  --brand:#12224a; --brand2:#4d86e0; --ok:#35c283; --warn:#f0a23a; --bad:#ef6a80; --accent:#f39a3c; --tile:#1d293b; --shadow:none; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e1523; --panel:#17212f; --panel2:#1d293b; --fg:#e5ebf6; --muted:#93a0b8; --line:#2a3850;
+  --brand:#12224a; --brand2:#4d86e0; --ok:#35c283; --warn:#f0a23a; --bad:#ef6a80; --accent:#f39a3c; --tile:#1d293b; --shadow:none; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px;line-height:1.5;margin:0;padding-left:max(0px,env(safe-area-inset-left,0px));padding-right:max(0px,env(safe-area-inset-right,0px));overflow-x:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.app{display:flex;flex-direction:column;height:100%;min-height:0}
+/* top bar */
+.top{background:var(--brand);color:var(--brand-fg);display:flex;align-items:center;gap:10px;padding:8px 12px;flex-wrap:wrap}
+.top .shop{font-weight:700;font-size:1.1rem;margin-right:auto;white-space:nowrap}
+.chip{background:rgba(255,255,255,.14);border:0;color:#fff;border-radius:8px;padding:6px 12px;font-size:.9rem;white-space:nowrap}
+.chip:hover{background:rgba(255,255,255,.24)}
+.chip.o{background:var(--accent);color:#1b1200;font-weight:600}
+.nav{display:flex;gap:4px;background:var(--brand);padding:0 12px 8px;overflow-x:auto}
+.nav button{background:transparent;border:0;color:#cfdaf3;padding:8px 16px;border-radius:8px;font-weight:600;white-space:nowrap}
+.nav button.on{background:var(--panel);color:var(--brand2)}
+main{flex:1;min-height:0;overflow:auto}
+/* sale */
+.sale{display:grid;grid-template-columns:minmax(330px,430px) 1fr;gap:12px;padding:12px;height:100%;min-height:0}
+.pane{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);min-width:0}
+.cartpane{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.row{display:flex;gap:8px;align-items:center}
+.cartpane .head{padding:10px;display:grid;gap:8px;border-bottom:1px solid var(--line)}
+input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
+input:focus,select:focus{border-color:var(--brand2)}
+.ib{border:1px solid var(--line);background:var(--panel2);border-radius:8px;width:38px;height:38px;flex:none;font-weight:700}
+.cartlist{flex:1;overflow:auto;min-height:120px}
+table{border-collapse:collapse;width:100%}
+th{background:var(--brand);color:#fff;font-weight:600;text-align:left;padding:8px 10px;position:sticky;top:0;z-index:1;white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+.r{text-align:right}.c{text-align:center}
+.num{font-variant-numeric:tabular-nums}
+.qty{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.qty button{border:0;background:var(--panel2);width:28px;height:30px;font-weight:700}
+.qty input{border:0;border-radius:0;width:44px;text-align:center;padding:4px;height:30px}
+.x{background:none;border:0;color:var(--bad);font-size:1.1rem;font-weight:700}
+.empty{padding:40px 16px;text-align:center;color:var(--muted)}
+.totals{border-top:1px solid var(--line);padding:10px;display:grid;gap:4px}
+.totals .l{display:flex;justify-content:space-between;color:var(--muted)}
+.grand{background:var(--brand);color:#fff;border-radius:8px;padding:10px 12px;display:flex;justify-content:space-between;font-size:1.35rem;font-weight:700;margin-top:6px}
+.grand small{font-weight:500;opacity:.85;font-size:.8rem;display:block}
+.acts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px;padding:10px}
+.btn{border:0;border-radius:8px;padding:10px 12px;font-weight:600;color:#fff;background:var(--brand2)}
+.btn.ok{background:var(--ok)}.btn.bad{background:var(--bad)}.btn.warn{background:var(--warn);color:#1a1200}
+.btn.gh{background:var(--panel2);color:var(--fg);border:1px solid var(--line)}
+.btn.big{padding:14px;font-size:1.05rem;grid-row:span 2}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+/* catalog */
+.catalog{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.cats{display:flex;gap:8px;padding:10px;overflow-x:auto;border-bottom:1px solid var(--line)}
+.cat{flex:none;border:1px solid var(--line);background:var(--tile);border-radius:10px;padding:8px 14px;font-weight:600;white-space:nowrap}
+.cat.on{background:var(--brand2);border-color:var(--brand2);color:#fff}
+.grid{flex:1;overflow:auto;padding:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px;align-content:start}
+.tile{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:10px 8px;text-align:center;display:flex;flex-direction:column;gap:4px;align-items:center;position:relative}
+.tile:hover{border-color:var(--brand2);background:var(--tile)}
+.tile .ic{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:1.25rem;color:#fff}
+.tile .nm{font-size:.86rem;line-height:1.3;min-height:2.2em;overflow-wrap:anywhere}
+.tile .pr{color:var(--bad);font-weight:700}
+.tile .st{position:absolute;top:6px;right:6px;font-size:.7rem;background:var(--panel2);border-radius:20px;padding:1px 7px;color:var(--muted)}
+.tile.low .st{background:var(--warn);color:#1a1200}
+.tile.out{opacity:.5}
+/* pages */
+.page{padding:12px;display:grid;gap:12px;max-width:1200px;margin:0 auto}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.bar .grow{flex:1;min-width:180px}
+.scroll{overflow-x:auto}
+.pane h3{margin:0;padding:12px 12px 0;font-size:1.05rem}
+.tag{display:inline-block;border-radius:20px;padding:1px 9px;font-size:.78rem;background:var(--panel2);color:var(--muted)}
+.tag.low{background:var(--warn);color:#1a1200}.tag.out{background:var(--bad);color:#fff}.tag.ok{background:var(--ok);color:#fff}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.kpi{padding:12px}.kpi b{display:block;font-size:1.4rem}.kpi span{color:var(--muted);font-size:.85rem}
+.bars{display:flex;align-items:flex-end;gap:6px;height:160px;padding:12px;overflow-x:auto}
+.bars div{flex:1;min-width:26px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;font-size:.7rem;color:var(--muted)}
+.bars i{display:block;width:100%;background:var(--brand2);border-radius:4px 4px 0 0;min-height:2px}
+/* modal */
+.ov{position:fixed;inset:0;background:rgba(8,14,28,.55);display:grid;place-items:center;padding:16px;z-index:50}
+.modal{background:var(--panel);border-radius:12px;width:min(520px,100%);max-height:92vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.modal h2{margin:0;padding:14px 16px;font-size:1.1rem;background:var(--brand);color:#fff;border-radius:12px 12px 0 0}
+.mb{padding:14px 16px;display:grid;gap:10px}
+.mf{padding:0 16px 16px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.f2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label{font-size:.85rem;color:var(--muted);display:grid;gap:3px}
+.quick{display:flex;gap:6px;flex-wrap:wrap}
+.quick button{border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:6px 10px}
+.pm{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.pm button{border:2px solid var(--line);background:var(--panel2);border-radius:10px;padding:10px;font-weight:600}
+.pm button.on{border-color:var(--ok);background:var(--tile)}
+.big-n{font-size:1.8rem;font-weight:700;text-align:center}
+.receipt{font-family:ui-monospace,Menlo,Consolas,"Kantumruy Pro",monospace;font-size:.85rem;background:#fff;color:#111;border:1px dashed #999;padding:14px;white-space:pre-wrap;border-radius:6px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:#16213a;color:#fff;padding:10px 18px;border-radius:30px;z-index:99;box-shadow:0 6px 20px rgba(0,0,0,.3);max-width:90vw}
+@media (max-width:860px){
+  .sale{grid-template-columns:1fr;height:auto}
+  .cartpane{max-height:none}
+  .cartlist{max-height:300px}
+  .catalog{min-height:420px}
+  .top .shop{width:100%}
+}
+@media (prefers-reduced-motion:no-preference){.modal{animation:pop .12s ease-out}@keyframes pop{from{transform:scale(.97);opacity:0}}}
+</style>
+
+<div class="app" id="app"></div>
+<div id="layer"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<script>
+(function(){
+"use strict";
+const KEY="sethika_pos_v1";
+const COLORS=["#2f64c4","#1c9a62","#d98314","#8a4fc4","#d3435b","#0f8f9c","#6b7a2a","#c2569a"];
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt=n=>Math.round(n||0).toLocaleString("en-US");
+const money=n=>fmt(n)+"៛";
+const pad=n=>String(n).padStart(2,"0");
+const dstr=d=>{d=new Date(d);return pad(d.getDate())+"-"+pad(d.getMonth()+1)+"-"+d.getFullYear()+" "+pad(d.getHours())+":"+pad(d.getMinutes())};
+const dkey=d=>{d=new Date(d);return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())};
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+
+/* ---------- data (example products are marked as samples) ---------- */
+function seed(){
+  const P=(barcode,name,cat,price,cost,stock,min)=>({id:uid()+barcode,barcode,name,cat,price,cost,stock,min:min||5});
+  return{
+    shop:"Sethika Mart",rate:4100,footer:"អរគុណសម្រាប់ការគាំទ្រ! សូមអញ្ជើញមកម្តងទៀត",
+    cats:["ភេសជ្ជៈ","គ្រឿងទេស","គ្រឿងសម្អាង","ទឹក និង ទឹកដោះគោ","សម្ភារៈប្រើប្រាស់","សម្ភារៈក្មេង"],
+    products:[
+      P("35593364","ទឹកក្រិកកោះកុង 366","ទឹក និង ទឹកដោះគោ",5000,3800,48,12),
+      P("56574658","Tessa តូច","សម្ភារៈប្រើប្រាស់",2000,1500,60,12),
+      P("1001","Coca-Cola កំប៉ុង","ភេសជ្ជៈ",2500,1900,72,24),
+      P("1002","Pepsi កំប៉ុង","ភេសជ្ជៈ",2500,1900,60,24),
+      P("1003","Fanta កំប៉ុង","ភេសជ្ជៈ",2500,1900,40,24),
+      P("1004","ទឹកបរិសុទ្ធ 500ml","ទឹក និង ទឹកដោះគោ",1000,600,120,36),
+      P("2001","មីហ៊ឹង KORENO Beef","គ្រឿងទេស",4000,3200,35,10),
+      P("2002","មីហ៊ឹនកាក់ Buldak Carbonara","គ្រឿងទេស",5000,4000,22,10),
+      P("2003","ម្សៅស៊ុប MELAMINE","គ្រឿងទេស",5000,3900,18,8),
+      P("3001","សាប៊ូលាងមុខ GARNIER 100ml","គ្រឿងសម្អាង",13000,10200,14,5),
+      P("3002","ប្រអប់ដាក់ក្រដាស +ឈើចាក់ធ្មេញ","សម្ភារៈប្រើប្រាស់",6000,4300,16,5),
+      P("3003","ក្រែមលាបមុខ Glow Lovely 100g","គ្រឿងសម្អាង",8000,6000,9,5),
+      P("4001","ក្រណាត់កាត់ Baby Girl","សម្ភារៈក្មេង",46000,36000,6,3),
+      P("4002","ខោទឹកនោម Daddy Care XXL","សម្ភារៈក្មេង",43000,35000,10,4),
+      P("4003","ខោទឹកនោម Coricori S","សម្ភារៈក្មេង",37000,29500,4,4),
+      P("4004","ខោទឹកនោម Coricori M","សម្ភារៈក្មេង",37000,29500,0,4)
+    ],
+    sales:[],ins:[],held:[],customers:[{id:"c0",name:"អតិថិជនទូទៅ",phone:""}],seq:0,
+    sample:true
+  };
+}
+let S=load();
+function load(){try{const t=localStorage.getItem(KEY);if(t){const d=JSON.parse(t);if(d&&d.products)return d}}catch(e){}return seed()}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+let cart=[],disc=0,discType="amt",cust="c0",view="sale",cat="*",q="",sq="",rng="today",pm="cash";
+const find=id=>S.products.find(p=>p.id===id);
+const canNeg=()=>S.neg!==false;
+const cartSub=()=>cart.reduce((a,i)=>a+i.price*i.qty,0);
+const discAmt=()=>Math.min(cartSub(),discType==="pct"?Math.round(cartSub()*disc/100):disc);
+const cartTotal=()=>cartSub()-discAmt();
+const catColor=c=>COLORS[Math.max(0,S.cats.indexOf(c))%COLORS.length];
+
+function toast(m){document.querySelectorAll(".toast").forEach(x=>x.remove());const t=document.createElement("div");t.className="toast";t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),2200)}
+function modal(title,body,foot){$("#layer").innerHTML=`<div class="ov" id="ov"><div class="modal" role="dialog" aria-label="${esc(title)}"><h2>${esc(title)}</h2><div class="mb">${body}</div><div class="mf">${foot||""}</div></div></div>`;
+  $("#ov").addEventListener("mousedown",e=>{if(e.target.id==="ov")closeM()})}
+function closeM(){$("#layer").innerHTML="";if(view==="sale"){const s=$("#scan");if(s)s.focus()}}
+
+/* ---------- shell ---------- */
+function shell(){
+  const tabs=[["sale","ការលក់"],["stock","ស្តុក"],["history","ប្រវត្តិលក់"],["report","របាយការណ៍"],["set","ការកំណត់"]];
+  $("#app").innerHTML=`
+  <header class="top"><div class="shop">${esc(S.shop)}</div>
+    <span class="chip" id="clock"></span>
+    <button class="chip" onclick="POS.held()">រង់ចាំ (${S.held.length})</button>
+    <button class="chip" onclick="POS.importUI()">⬆ នាំចូលពីកម្មវិធីចាស់</button>
+    ${shiftChip()}
+    <span class="chip">👤 អ្នកគិតលុយ</span></header>
+  <nav class="nav">${tabs.map(t=>`<button class="${view===t[0]?"on":""}" onclick="POS.go('${t[0]}')">${t[1]}</button>`).join("")}</nav>
+  <main id="main"></main>`;
+  tick();draw();
+}
+function tick(){const c=$("#clock");if(c)c.textContent=dstr(new Date())}
+setInterval(tick,20000);
+function draw(){({sale:vSale,stock:vStock,history:vHist2,report:vReport2,set:vSet2})[view]()}
+
+/* ---------- sale ---------- */
+function vSale(){
+  const list=S.products.filter(p=>(cat==="*"||p.cat===cat)&&(!q||(p.name+p.barcode).toLowerCase().includes(q.toLowerCase())));
+  $("#main").innerHTML=`<div class="sale">
+  <section class="pane cartpane">
+    <div class="head">
+      <div class="row"><select id="cust" onchange="POS.setCust(this.value)">${S.customers.map(c=>`<option value="${c.id}" ${c.id===cust?"selected":""}>${esc(c.name)}${c.phone?" · "+esc(c.phone):""}</option>`).join("")}</select>
+        <button class="ib" title="បន្ថែមអតិថិជន" onclick="POS.newCust()">+</button></div>
+      <input id="scan" placeholder="Scan បារកូដ / ស្វែងរកតាមឈ្មោះ ហើយចុច Enter" autocomplete="off" value="${esc(q)}">
+    </div>
+    <div class="cartlist">${cart.length?`<table><thead><tr><th>ទំនិញ</th><th class="r">តម្លៃ</th><th class="c">ចំនួន</th><th class="r">សរុប</th><th></th></tr></thead><tbody>
+      ${cart.map((i,k)=>`<tr><td>${esc(i.name)}<div style="color:var(--muted);font-size:.78rem">${esc(i.barcode)}</div></td>
+        <td class="r num">${fmt(i.price)}</td>
+        <td class="c"><span class="qty"><button onclick="POS.qty(${k},-1)" aria-label="បន្ថយ">−</button><input value="${i.qty}" inputmode="numeric" onchange="POS.setQty(${k},this.value)" aria-label="ចំនួន"><button onclick="POS.qty(${k},1)" aria-label="បន្ថែម">+</button></span></td>
+        <td class="r num">${fmt(i.price*i.qty)}</td><td><button class="x" onclick="POS.del(${k})" aria-label="លុប">✕</button></td></tr>`).join("")}
+      </tbody></table>`:`<div class="empty">មិនទាន់មានទំនិញ<br>Scan បារកូដ ឬ ចុចលើទំនិញនៅខាងស្តាំ</div>`}</div>
+    <div class="totals">
+      <div class="l"><span>ទំនិញ</span><b class="num">${cart.length} (${cart.reduce((a,i)=>a+i.qty,0)})</b></div>
+      <div class="l"><span>សរុបរង</span><b class="num">${money(cartSub())}</b></div>
+      <div class="l"><span>បញ្ចុះតម្លៃ <button class="chip" style="background:var(--panel2);color:var(--fg);padding:1px 8px" onclick="POS.discount()">កែ</button></span><b class="num">−${money(discAmt())}</b></div>
+      <div class="grand"><span>សរុប</span><span style="text-align:right">${money(cartTotal())}<small>≈ $${(cartTotal()/S.rate).toFixed(2)}</small></span></div>
+    </div>
+    <div class="acts">
+      <button class="btn warn" onclick="POS.hold()" ${cart.length?"":"disabled"}>រង់ចាំ</button>
+      <button class="btn bad" onclick="POS.clear()" ${cart.length?"":"disabled"}>បោះបង់</button>
+      <button class="btn ok big" onclick="POS.pay()" ${cart.length?"":"disabled"}>គិតលុយ</button>
+      <button class="btn gh" onclick="POS.go('history')" style="grid-column:span 2">វិក្កយបត្រចុងក្រោយ</button>
+    </div>
+  </section>
+  <section class="pane catalog">
+    <div class="cats"><button class="cat ${cat==="*"?"on":""}" onclick="POS.setCat('*')">ទាំងអស់</button>
+      ${S.cats.map((c,i)=>`<button class="cat ${cat===c?"on":""}" onclick="POS.setCat(${i})">${esc(c)}</button>`).join("")}</div>
+    <div class="grid">${list.length?list.map(p=>`<button class="tile ${p.stock<=0?"out":p.stock<=p.min?"low":""}" onclick="POS.add('${p.id}')">
+      <span class="st">${p.stock}</span><span class="ic" style="background:${catColor(p.cat)}">${esc([...p.name][0]||"?")}</span>
+      <span class="nm">${esc(p.name)}</span><span class="pr num">${money(p.price)}</span></button>`).join(""):`<div class="empty" style="grid-column:1/-1">រកមិនឃើញទំនិញ</div>`}</div>
+  </section></div>`;
+  const s=$("#scan");
+  if(!curShift()){const hd0=document.querySelector(".cartpane .head");if(hd0)hd0.insertAdjacentHTML("afterbegin",`<button class="btn warn" onclick="POS.openShift()">⚠ មិនទាន់បើកវេន ចុចដើម្បីបើកវេនលក់</button>`)}
+  let scanT=0;
+  s.addEventListener("input",()=>{q=s.value;refreshGrid();clearTimeout(scanT);const v=q.trim();if(v&&S.products.some(x=>x.barcode===v)){scanT=setTimeout(()=>{if(s.value.trim()===v)scanEnter()},150)}});
+  s.addEventListener("keydown",e=>{if(e.key==="Enter"){clearTimeout(scanT);scanEnter()}});
+  const cl=document.querySelector(".cartlist");if(cl)cl.scrollTop=cl.scrollHeight;
+  if(matchMedia("(pointer:fine)").matches||window.innerWidth>860)s.focus();
+}
+function refreshGrid(){
+  const g=document.querySelector(".grid");if(!g)return;
+  const list=S.products.filter(p=>(cat==="*"||p.cat===cat)&&(!q||(p.name+p.barcode).toLowerCase().includes(q.toLowerCase())));
+  g.innerHTML=list.length?list.map(p=>`<button class="tile ${p.stock<=0?"out":p.stock<=p.min?"low":""}" onclick="POS.add('${p.id}')"><span class="st">${p.stock}</span><span class="ic" style="background:${catColor(p.cat)}">${esc([...p.name][0]||"?")}</span><span class="nm">${esc(p.name)}</span><span class="pr num">${money(p.price)}</span></button>`).join(""):`<div class="empty" style="grid-column:1/-1">រកមិនឃើញទំនិញ</div>`;
+}
+let AC;
+function beep(ok){try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain();o.frequency.value=ok?1100:300;g.gain.value=.08;o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+(ok?.07:.25))}catch(e){}}
+function scanEnter(){
+  const v=q.trim();if(!v)return;
+  const lv=v.toLowerCase();
+  let p=S.products.find(x=>x.barcode===v);
+  if(!p){const m=S.products.filter(x=>x.name.toLowerCase().includes(lv));if(m.length===1)p=m[0];else if(m.length>1){toast("មាន "+m.length+" ទំនិញត្រូវគ្នា សូមជ្រើសពីបញ្ជីខាងស្តាំ");return}}
+  if(!p){beep(false);q="";vSale();
+    if(/^\d{4,}$/.test(v)){modal("រកមិនឃើញបារកូដ "+v,`<div>ទំនិញនេះមិនទាន់មានក្នុងប្រព័ន្ធទេ។ ចង់បន្ថែមវាឥឡូវនេះទេ?</div>`,`<button class="btn gh" onclick="POS.close()">បិទ</button><button class="btn ok" onclick="POS.editP(null,'${v}')">បន្ថែមទំនិញថ្មី</button>`)}
+    else toast("រកមិនឃើញទំនិញ");
+    return}
+  q="";addToCart(p.id,true);
+}
+function addToCart(id,scan){
+  const p=find(id);if(!p)return;
+  const it=cart.find(i=>i.id===id);const have=it?it.qty:0;
+  if(!canNeg()&&have+1>p.stock){beep(false);toast("ស្តុកមិនគ្រប់៖ នៅសល់ "+p.stock);if(scan){q="";vSale()}return}
+  if(it)it.qty++;else cart.push({id:p.id,barcode:p.barcode,name:p.name,price:p.price,cost:p.cost,qty:1});
+  beep(true);if(scan)toast("+ "+p.name+"  "+money(p.price));
+  vSale();
+}
+
+/* ---------- stock ---------- */
+function vStock(){
+  const l=S.products.filter(p=>!sq||(p.name+p.barcode+p.cat).toLowerCase().includes(sq.toLowerCase()));
+  const val=S.products.reduce((a,p)=>a+p.stock*p.cost,0),low=S.products.filter(p=>p.stock<=p.min).length;
+  $("#main").innerHTML=`<div class="page">
+  <div class="kpis"><div class="pane kpi"><span>ប្រភេទទំនិញ</span><b>${S.products.length}</b></div>
+    <div class="pane kpi"><span>តម្លៃស្តុក (ដើម)</span><b>${money(val)}</b></div>
+    <div class="pane kpi"><span>ជិតអស់ / អស់ស្តុក</span><b style="color:${low?"var(--warn)":"var(--ok)"}">${low}</b></div></div>
+  <div class="pane"><div class="bar" style="padding:12px"><input class="grow" id="sq" placeholder="ស្វែងរកទំនិញ ឬ បារកូដ" value="${esc(sq)}">
+    <button class="btn" onclick="POS.editP()">+ ទំនិញថ្មី</button><button class="btn ok" onclick="POS.stockIn()">⬇ បញ្ចូលស្តុក</button><button class="btn gh" onclick="POS.cats()">ប្រភេទ</button><button class="btn warn" onclick="POS.importUI()">⬆ នាំចូលពីកម្មវិធីចាស់</button><button class="btn bad" onclick="POS.delAll()">🗑 លុបទំនិញទាំងអស់</button></div>
+  <div class="scroll"><table><thead><tr><th>បារកូដ</th><th>ឈ្មោះ</th><th>ប្រភេទ</th><th class="r">ដើម</th><th class="r">លក់</th><th class="r">ស្តុក</th><th></th></tr></thead><tbody>
+  ${l.map(p=>`<tr><td>${esc(p.barcode)}</td><td>${esc(p.name)}</td><td><span class="tag">${esc(p.cat)}</span></td><td class="r num">${fmt(p.cost)}</td><td class="r num">${fmt(p.price)}</td>
+    <td class="r num"><span class="tag ${p.stock<=0?"out":p.stock<=p.min?"low":"ok"}">${p.stock}</span></td>
+    <td class="r" style="white-space:nowrap"><button class="btn ok" style="padding:4px 10px" onclick="POS.stockIn('${p.id}')">+ស្តុក</button> <button class="btn gh" style="padding:4px 10px" onclick="POS.editP('${p.id}')">កែ</button></td></tr>`).join("")||`<tr><td colspan="7" class="empty">មិនមានទំនិញ</td></tr>`}
+  </tbody></table></div></div>
+  <div class="pane"><h3>ប្រវត្តិបញ្ចូលស្តុក</h3><div class="scroll"><table><thead><tr><th>កាលបរិច្ឆេទ</th><th>ទំនិញ</th><th class="r">ចំនួន</th><th class="r">តម្លៃដើម</th><th>កំណត់ចំណាំ</th></tr></thead><tbody>
+  ${S.ins.slice().reverse().slice(0,30).map(x=>`<tr><td>${dstr(x.date)}</td><td>${esc(x.name)}</td><td class="r num">${x.qty>0?"+":""}${x.qty}</td><td class="r num">${fmt(x.cost)}</td><td>${esc(x.note||"")}</td></tr>`).join("")||`<tr><td colspan="5" class="empty">មិនទាន់មានការបញ្ចូលស្តុក</td></tr>`}
+  </tbody></table></div></div></div>`;
+  const s=$("#sq");s.addEventListener("input",()=>{sq=s.value;const pos=s.selectionStart;vStock();const n=$("#sq");n.focus();n.setSelectionRange(pos,pos)});
+}
+
+/* ---------- history ---------- */
+function vHist(){
+  $("#main").innerHTML=`<div class="page"><div class="pane"><h3>ប្រវត្តិលក់</h3><div class="scroll"><table><thead><tr><th>លេខវិក្កយបត្រ</th><th>កាលបរិច្ឆេទ</th><th>អតិថិជន</th><th class="c">ទំនិញ</th><th>បង់តាម</th><th class="r">សរុប</th><th></th></tr></thead><tbody>
+  ${S.sales.slice().reverse().slice(0,200).map(s=>`<tr style="${s.void?"opacity:.5;text-decoration:line-through":""}"><td>${esc(s.no)}</td><td>${dstr(s.date)}</td><td>${esc(s.customer)}</td><td class="c">${s.items.reduce((a,i)=>a+i.qty,0)}</td><td>${({cash:"សាច់ប្រាក់",qr:"QR / ABA",card:"កាត"})[s.method]||s.method}</td><td class="r num">${money(s.total)}</td>
+  <td class="r"><button class="btn gh" style="padding:4px 10px" onclick="POS.receipt('${s.id}')">មើល</button></td></tr>`).join("")||`<tr><td colspan="7" class="empty">មិនទាន់មានការលក់</td></tr>`}
+  </tbody></table></div></div></div>`;
+}
+
+/* ---------- report ---------- */
+function inRange(d){const t=new Date(d),n=new Date();
+  if(rng==="all")return true;
+  if(rng==="today")return dkey(t)===dkey(n);
+  const days=rng==="7"?7:30;return (n-t)/864e5<days}
+function vReport(){
+  const ss=S.sales.filter(s=>!s.void&&inRange(s.date));
+  const rev=ss.reduce((a,s)=>a+s.total,0),prof=ss.reduce((a,s)=>a+s.total-s.items.reduce((b,i)=>b+i.cost*i.qty,0)-0,0);
+  const top={};ss.forEach(s=>s.items.forEach(i=>{const t=top[i.name]||(top[i.name]={q:0,r:0});t.q+=i.qty;t.r+=i.price*i.qty}));
+  const tl=Object.entries(top).sort((a,b)=>b[1].r-a[1].r).slice(0,10);
+  const byDay={};ss.forEach(s=>{const k=dkey(s.date);byDay[k]=(byDay[k]||0)+s.total});
+  const days=Object.keys(byDay).sort().slice(-14),mx=Math.max(1,...days.map(k=>byDay[k]));
+  const meth={cash:0,qr:0,card:0};ss.forEach(s=>meth[s.method]=(meth[s.method]||0)+s.total);
+  $("#main").innerHTML=`<div class="page">
+  <div class="bar">${[["today","ថ្ងៃនេះ"],["7","៧ ថ្ងៃ"],["30","៣០ ថ្ងៃ"],["all","ទាំងអស់"]].map(r=>`<button class="btn ${rng===r[0]?"":"gh"}" onclick="POS.rng('${r[0]}')">${r[1]}</button>`).join("")}</div>
+  <div class="kpis"><div class="pane kpi"><span>ចំណូលសរុប</span><b>${money(rev)}</b></div><div class="pane kpi"><span>ប្រាក់ចំណេញ</span><b style="color:var(--ok)">${money(prof)}</b></div>
+   <div class="pane kpi"><span>ចំនួនវិក្កយបត្រ</span><b>${ss.length}</b></div><div class="pane kpi"><span>ជាមធ្យម / វិក្កយបត្រ</span><b>${money(ss.length?rev/ss.length:0)}</b></div></div>
+  <div class="pane"><h3>ការលក់តាមថ្ងៃ</h3>${days.length?`<div class="bars">${days.map(k=>`<div title="${k}: ${money(byDay[k])}"><i style="height:${Math.max(2,byDay[k]/mx*100)}%"></i>${k.slice(5)}</div>`).join("")}</div>`:`<div class="empty">មិនទាន់មានទិន្នន័យ</div>`}</div>
+  <div class="pane"><h3>បែងចែកតាមការបង់ប្រាក់</h3><div class="mb">សាច់ប្រាក់ <b class="num">${money(meth.cash)}</b> · QR / ABA <b class="num">${money(meth.qr)}</b> · កាត <b class="num">${money(meth.card)}</b></div></div>
+  <div class="pane"><h3>ទំនិញលក់ដាច់ ១០ ជាប់ឆ្នាយ</h3><div class="scroll"><table><thead><tr><th>ទំនិញ</th><th class="r">ចំនួន</th><th class="r">ចំណូល</th></tr></thead><tbody>
+  ${tl.map(t=>`<tr><td>${esc(t[0])}</td><td class="r num">${t[1].q}</td><td class="r num">${money(t[1].r)}</td></tr>`).join("")||`<tr><td colspan="3" class="empty">មិនទាន់មានទិន្នន័យ</td></tr>`}</tbody></table></div></div></div>`;
+}
+
+/* ---------- settings ---------- */
+function vSet(){
+  $("#main").innerHTML=`<div class="page"><div class="pane"><h3>ការកំណត់ហាង</h3><div class="mb">
+  <label>ឈ្មោះហាង<input id="s1" value="${esc(S.shop)}"></label>
+  <label>អត្រាប្តូរប្រាក់ (១ ដុល្លារ = ? រៀល)<input id="s2" inputmode="numeric" value="${S.rate}"></label>
+  <label>សារចុងវិក្កយបត្រ<input id="s3" value="${esc(S.footer)}"></label>
+  <label>លក់ពេលស្តុកអស់ ឬ មិនគ្រប់<select id="s4"><option value="1" ${S.neg!==false?"selected":""}>អនុញ្ញាត (ស្តុកអាចអវិជ្ជមាន)</option><option value="0" ${S.neg===false?"selected":""}>មិនអនុញ្ញាត</option></select></label>
+  <div class="row"><button class="btn ok" onclick="POS.saveSet()">រក្សាទុក</button></div></div></div>
+  <div class="pane"><h3>ទិន្នន័យ</h3><div class="mb"><div style="color:var(--muted)">ទិន្នន័យត្រូវបានរក្សាទុកក្នុងកម្មវិធីរុករកនេះ។ ទំនិញគំរូត្រូវបានបញ្ចូលជាមុន ដើម្បីសាកល្បង។</div>
+  <div class="row"><div class="bar"><button class="btn ok" onclick="POS.importUI()">⬆ នាំចូលពីកម្មវិធីចាស់</button><button class="btn warn" onclick="POS.empty()">ចាប់ផ្តើមទទេ (លុបទំនិញគំរូ)</button><button class="btn bad" onclick="POS.reset()">ត្រឡប់ទៅទិន្នន័យគំរូ</button></div></div></div></div></div>`;
+}
+
+/* ---------- actions ---------- */
+const POS={
+  go(v){view=v;shell()},
+  setCust(v){cust=v},
+  setCat(i){cat=i==="*"?"*":S.cats[i];vSale()},
+  add(id){addToCart(id)},
+  qty(k,d){const it=cart[k],p=find(it.id);const n=it.qty+d;if(n<1){cart.splice(k,1)}else if(!canNeg()&&n>p.stock){toast("ស្តុកមិនគ្រប់៖ នៅសល់ "+p.stock)}else it.qty=n;vSale()},
+  setQty(k,v){const it=cart[k],p=find(it.id);let n=parseInt(v,10);if(!(n>0))n=1;if(!canNeg()&&n>p.stock){toast("ស្តុកមិនគ្រប់៖ នៅសល់ "+p.stock);n=p.stock}it.qty=n;vSale()},
+  del(k){cart.splice(k,1);vSale()},
+  clear(){cart=[];disc=0;vSale()},
+  hold(){if(!cart.length)return;S.held.push({id:uid(),date:Date.now(),cart,disc,discType,cust});cart=[];disc=0;save();shell();toast("បានទុករង់ចាំ")},
+  held(){
+    modal("បញ្ជីរង់ចាំ",S.held.length?S.held.map(h=>`<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0"><span>${dstr(h.date)} · ${h.cart.length} មុខ · <b class="num">${money(h.cart.reduce((a,i)=>a+i.price*i.qty,0))}</b></span><span><button class="btn ok" style="padding:4px 10px" onclick="POS.recall('${h.id}')">បើក</button> <button class="btn bad" style="padding:4px 10px" onclick="POS.dropHeld('${h.id}')">លុប</button></span></div>`).join(""):`<div class="empty">គ្មានការរង់ចាំ</div>`,`<button class="btn gh" onclick="POS.close()">បិទ</button>`)},
+  recall(id){const h=S.held.find(x=>x.id===id);if(!h)return;if(cart.length){toast("សូមបោះបង់ ឬ គិតលុយកន្ត្រកបច្ចុប្បន្នជាមុន");return}
+    cart=h.cart;disc=h.disc;discType=h.discType;cust=h.cust;S.held=S.held.filter(x=>x.id!==id);save();view="sale";closeM();shell()},
+  dropHeld(id){S.held=S.held.filter(x=>x.id!==id);save();POS.held();shell()},
+  close:closeM,
+  discount(){
+    modal("បញ្ចុះតម្លៃ",`<div class="f2"><label>ប្រភេទ<select id="dt"><option value="amt" ${discType==="amt"?"selected":""}>ចំនួនទឹកប្រាក់ (៛)</option><option value="pct" ${discType==="pct"?"selected":""}>ភាគរយ (%)</option></select></label>
+      <label>តម្លៃ<input id="dv" inputmode="numeric" value="${disc}"></label></div>`,
+      `<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.setDisc()">យល់ព្រម</button>`);setTimeout(()=>{const e=$("#dv");if(e){e.focus();e.select()}},30)},
+  setDisc(){discType=$("#dt").value;let v=Math.max(0,parseFloat($("#dv").value)||0);if(discType==="pct")v=Math.min(100,v);disc=v;closeM();vSale()},
+  newCust(){modal("អតិថិជនថ្មី",`<label>ឈ្មោះ<input id="cn"></label><label>លេខទូរស័ព្ទ<input id="cp" inputmode="tel"></label>`,`<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.addCust()">រក្សាទុក</button>`)},
+  addCust(){const n=$("#cn").value.trim();if(!n){toast("សូមបញ្ចូលឈ្មោះ");return}const c={id:uid(),name:n,phone:$("#cp").value.trim()};S.customers.push(c);cust=c.id;save();closeM();vSale()},
+  pay(){
+    if(!cart.length)return;if(!curShift()){POS.openShift(true);return}const t=cartTotal();pm="cash";
+    modal("គិតលុយ",`<div style="text-align:center;color:var(--muted)">ទឹកប្រាក់ត្រូវបង់</div><div class="big-n num">${money(t)}</div><div style="text-align:center;color:var(--muted)">≈ $${(t/S.rate).toFixed(2)}</div>
+     <div class="pm"><button class="on" id="pm-cash" onclick="POS.pm('cash')">សាច់ប្រាក់</button><button id="pm-qr" onclick="POS.pm('qr')">QR / ABA</button><button id="pm-card" onclick="POS.pm('card')">កាត</button></div>
+     <label>ប្រាក់ទទួល (៛)<input id="rec" inputmode="numeric" value="${t}"></label>
+     <div class="quick">${[t,5000,10000,20000,50000,100000].map((v,i)=>`<button onclick="POS.setRec(${v})">${i?fmt(v):"គ្រប់ចំនួន"}</button>`).join("")}</div>
+     <div class="row" style="justify-content:space-between;font-size:1.2rem"><span>អាប់លុយ</span><b id="chg" class="num" style="color:var(--ok)">0៛</b></div>`,
+     `<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" id="okp" onclick="POS.finish()">បញ្ជាក់ការបង់ប្រាក់</button>`);
+    const r=$("#rec");r.addEventListener("input",POS.calc);r.addEventListener("keydown",e=>{if(e.key==="Enter")POS.finish()});r.focus();r.select();POS.calc()},
+  pm(m){pm=m;["cash","qr","card"].forEach(x=>$("#pm-"+x).classList.toggle("on",x===m));if(m!=="cash")POS.setRec(cartTotal());POS.calc()},
+  setRec(v){$("#rec").value=v;POS.calc()},
+  calc(){const t=cartTotal(),r=parseFloat($("#rec").value)||0,c=r-t;const e=$("#chg");e.textContent=c>=0?money(c):"ខ្វះ "+money(-c);e.style.color=c>=0?"var(--ok)":"var(--bad)";$("#okp").disabled=c<0},
+  finish(){
+    const t=cartTotal(),r=parseFloat($("#rec").value)||0;if(r<t)return;
+    for(const i of cart){const p=find(i.id);if(!p||(!canNeg()&&p.stock<i.qty)){toast("ស្តុកមិនគ្រប់សម្រាប់ "+i.name);return}}
+    const c=S.customers.find(x=>x.id===cust)||S.customers[0];
+    S.seq++;const sale={id:uid(),no:"INV-"+dkey(new Date()).replace(/-/g,"")+"-"+String(S.seq).padStart(4,"0"),date:Date.now(),shift:(curShift()||{}).id,items:cart.map(i=>({...i})),sub:cartSub(),disc:discAmt(),total:t,paid:r,change:r-t,method:pm,customer:c.name};
+    cart.forEach(i=>{find(i.id).stock-=i.qty});S.sales.push(sale);save();
+    cart=[];disc=0;cust="c0";shell();POS.receipt(sale.id,true);if(P().auto&&!embedded())POS.printSale(sale.id)},
+  receipt(id,fresh){
+    const s=S.sales.find(x=>x.id===id);if(!s)return;
+    const w=32,ln=(a,b)=>{a=String(a);b=String(b);return a+" ".repeat(Math.max(1,w-[...a].length-b.length))+b};
+    const txt=[S.shop,"វិក្កយបត្រលក់","-".repeat(w),"លេខ: "+s.no,"កាលបរិច្ឆេទ: "+dstr(s.date),"អតិថិជន: "+s.customer,"-".repeat(w),
+      ...s.items.map(i=>i.name+"\n"+ln("  "+i.qty+" × "+fmt(i.price),fmt(i.price*i.qty))),"-".repeat(w),
+      ln("សរុបរង",fmt(s.sub)),ln("បញ្ចុះតម្លៃ","-"+fmt(s.disc)),ln("សរុប",fmt(s.total)+"៛"),ln("ទទួល",fmt(s.paid)),ln("អាប់លុយ",fmt(s.change)),"-".repeat(w),S.footer].join("\n");
+    modal(fresh?"ការលក់បានជោគជ័យ":"វិក្កយបត្រ",`<div class="receipt" id="rc">${esc(txt)}</div>${s.void?`<div class="tag out">បានលុបចោល</div>`:""}`,
+      `${s.void?"":`<button class="btn bad" onclick="POS.void('${s.id}')">លុបចោល (ត្រឡប់ស្តុក)</button>`}<button class="btn gh" id="cp" onclick="POS.copyR()">ចម្លង</button><button class="btn ok" onclick="POS.close()">បិទ</button>`);
+    window.__rtxt=txt},
+  copyR(){const t=window.__rtxt||"";const b=$("#cp");const done=()=>{if(b)b.textContent="បានចម្លង ✓"};
+    try{navigator.clipboard.writeText(t).then(done,()=>sel())}catch(e){sel()}
+    function sel(){const r=document.createRange();r.selectNodeContents($("#rc"));const g=getSelection();g.removeAllRanges();g.addRange(r);toast("សូមចុច Ctrl+C ដើម្បីចម្លង")}},
+  void(id){const s=S.sales.find(x=>x.id===id);if(!s||s.void)return;
+    if(!confirmed(id)){return}
+    s.void=true;s.items.forEach(i=>{const p=find(i.id);if(p)p.stock+=i.qty});save();closeM();toast("បានលុបវិក្កយបត្រ ហើយត្រឡប់ស្តុក");draw()},
+  cash(){modal("កត់ត្រាប្រាក់",`<div style="color:var(--muted)">សរុបលក់ថ្ងៃនេះ (សាច់ប្រាក់)</div><div class="big-n num">${money(S.sales.filter(s=>!s.void&&dkey(s.date)===dkey(new Date())&&s.method==="cash").reduce((a,s)=>a+s.total,0))}</div>
+    <div style="color:var(--muted);text-align:center">វិក្កយបត្រថ្ងៃនេះ ${S.sales.filter(s=>!s.void&&dkey(s.date)===dkey(new Date())).length}</div>`,`<button class="btn ok" onclick="POS.close()">បិទ</button>`)},
+  /* stock */
+  editP(id,bc){
+    const p=id?find(id):{barcode:bc||"",name:"",cat:S.cats[0]||"",price:"",cost:"",stock:0,min:5};
+    modal(id?"កែទំនិញ":"ទំនិញថ្មី",`<div class="f2"><label>បារកូដ<input id="pb" value="${esc(p.barcode)}"></label><label>ប្រភេទ<select id="pc">${S.cats.map(c=>`<option ${c===p.cat?"selected":""}>${esc(c)}</option>`).join("")}</select></label></div>
+      <label>ឈ្មោះទំនិញ<input id="pn" value="${esc(p.name)}"></label>
+      <div class="f2"><label>តម្លៃដើម (៛)<input id="pcost" inputmode="numeric" value="${p.cost}"></label><label>តម្លៃលក់ (៛)<input id="ppr" inputmode="numeric" value="${p.price}"></label></div>
+      <div class="f2"><label>ស្តុក<input id="pst" inputmode="numeric" value="${p.stock}"></label><label>ស្តុកអប្បបរមា (ជូនដំណឹង)<input id="pmn" inputmode="numeric" value="${p.min}"></label></div>`,
+      `${id?`<button class="btn bad" onclick="POS.delP('${id}')">លុប</button>`:""}<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.saveP('${id||""}')">រក្សាទុក</button>`)},
+  saveP(id){
+    const n=$("#pn").value.trim(),b=$("#pb").value.trim(),pr=parseFloat($("#ppr").value),co=parseFloat($("#pcost").value)||0;
+    if(!n||!(pr>=0)){toast("សូមបញ្ចូលឈ្មោះ និង តម្លៃលក់");return}
+    if(b&&S.products.some(x=>x.barcode===b&&x.id!==id)){toast("បារកូដនេះមានរួចហើយ");return}
+    const d={barcode:b||String(Date.now()).slice(-8),name:n,cat:$("#pc").value,price:pr,cost:co,stock:parseInt($("#pst").value,10)||0,min:parseInt($("#pmn").value,10)||0};
+    if(id)Object.assign(find(id),d);else S.products.push({id:uid(),...d});
+    save();closeM();draw()},
+  delP(id){if(!confirmed("d"+id))return;S.products=S.products.filter(p=>p.id!==id);cart=cart.filter(i=>i.id!==id);save();closeM();draw()},
+  stockIn(id){
+    modal("បញ្ចូលស្តុក",`<label>ទំនិញ<select id="si" onchange="POS.siFill()">${S.products.map(p=>`<option value="${p.id}" ${p.id===id?"selected":""}>${esc(p.name)} (ស្តុក ${p.stock})</option>`).join("")}</select></label>
+      <div class="f2"><label>ចំនួនបញ្ចូល (ដកចេញ ប្រើ −)<input id="sq2" inputmode="numeric" value="1"></label><label>តម្លៃដើមថ្មី (៛)<input id="sc" inputmode="numeric"></label></div>
+      <label>កំណត់ចំណាំ / អ្នកផ្គត់ផ្គង់<input id="sn"></label>`,`<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.saveIn()">បញ្ចូល</button>`);POS.siFill()},
+  siFill(){const p=find($("#si").value);if(p)$("#sc").value=p.cost},
+  saveIn(){const p=find($("#si").value),q=parseInt($("#sq2").value,10),c=parseFloat($("#sc").value)||0;
+    if(!p||!q){toast("សូមបញ្ចូលចំនួន");return}if(p.stock+q<0){toast("ស្តុកមិនអាចតិចជាងសូន្យ");return}
+    p.stock+=q;if(q>0&&c>0)p.cost=c;S.ins.push({id:uid(),date:Date.now(),pid:p.id,name:p.name,qty:q,cost:c,note:$("#sn").value.trim()});save();closeM();draw();toast("បានបញ្ចូលស្តុក")},
+  cats(){modal("ប្រភេទទំនិញ",`<div id="cl">${S.cats.map((c,i)=>`<div class="row" style="justify-content:space-between;padding:4px 0"><span>${esc(c)}</span><button class="x" onclick="POS.delCat(${i})">✕</button></div>`).join("")}</div>
+    <div class="row"><input id="nc" placeholder="ឈ្មោះប្រភេទថ្មី"><button class="btn ok" onclick="POS.addCat()">បន្ថែម</button></div>`,`<button class="btn gh" onclick="POS.close()">បិទ</button>`)},
+  addCat(){const v=$("#nc").value.trim();if(!v||S.cats.includes(v))return;S.cats.push(v);save();POS.cats();draw()},
+  delCat(i){const c=S.cats[i];if(S.products.some(p=>p.cat===c)){toast("មានទំនិញក្នុងប្រភេទនេះ មិនអាចលុបបានទេ");return}S.cats.splice(i,1);save();POS.cats();draw()},
+  rng(r){rng=r;vReport()},
+  saveSet(){S.shop=$("#s1").value.trim()||"Sethika Mart";S.rate=parseFloat($("#s2").value)||4100;S.footer=$("#s3").value;S.neg=$("#s4").value==="1";save();shell();toast("បានរក្សាទុក")},
+  reset(){if(!confirmed("reset"))return;S=seed();cart=[];save();view="sale";shell();toast("បានចាប់ផ្តើមថ្មី")}
+};
+/* ---------- import from old system ---------- */
+const FIELDS={prod:[["barcode","បារកូដ"],["name","ឈ្មោះទំនិញ *"],["cat","ប្រភេទ"],["cost","តម្លៃដើម"],["price","តម្លៃលក់"],["stock","ស្តុក"],["min","ស្តុកអប្បបរមា"]],cust:[["name","ឈ្មោះ *"],["phone","លេខទូរស័ព្ទ"]]};
+const ALIAS={barcode:["barcode","bar code","sku","item code","product code","code","បារកូដ","លេខកូដ","កូដ"],cost:["cost","purchase","buy","តម្លៃដើម","ដើម"],price:["price","retail","selling","តម្លៃលក់","តម្លៃ"],min:["min","alert","reorder","អប្បបរមា","ជូនដំណឹង"],stock:["stock","qty","quantity","on hand","balance","ស្តុក","ចំនួន","សល់"],cat:["category","group","cat","ប្រភេទ","ក្រុម"],phone:["phone","tel","mobile","contact","ទូរស័ព្ទ","លេខទូរ"],name:["name","product","item","description","ឈ្មោះ","ទំនិញ","ផលិតផល"]};
+const AUTO={prod:["barcode","cost","price","min","stock","cat","name"],cust:["phone","name"]};
+let imp={type:"prod",rows:[],map:{}};
+const num=v=>{const n=parseFloat(String(v==null?"":v).replace(/[^\d.\-]/g,""));return isNaN(n)?0:n};
+function autoMap(){const head=imp.rows[0].map(h=>String(h==null?"":h).toLowerCase().trim());const used=new Set(),m={};
+  FIELDS[imp.type].forEach(f=>m[f[0]]=-1);
+  AUTO[imp.type].forEach(f=>{const i=head.findIndex((h,k)=>!used.has(k)&&h&&ALIAS[f].some(a=>h.includes(a)));if(i>=0){m[f]=i;used.add(i)}});
+  imp.map=m}
+function parseText(t){t=t.replace(/^﻿/,"");const first=t.split(/\r?\n/)[0]||"";
+  const d=first.includes("\t")?"\t":((first.match(/;/g)||[]).length>(first.match(/,/g)||[]).length?";":",");
+  const rows=[];let row=[],cur="",q2=false;
+  for(let i=0;i<t.length;i++){const c=t[i];
+    if(q2){if(c==='"'){if(t[i+1]==='"'){cur+='"';i++}else q2=false}else cur+=c}
+    else if(c==='"')q2=true;
+    else if(c===d){row.push(cur);cur=""}
+    else if(c==="\n"||c==="\r"){if(c==="\r"&&t[i+1]==="\n")i++;row.push(cur);cur="";rows.push(row);row=[]}
+    else cur+=c}
+  if(cur!==""||row.length){row.push(cur);rows.push(row)}
+  return rows}
+function setRows(rows){
+  rows=rows.filter(r=>r.some(c=>String(c==null?"":c).trim()!==""));
+  if(rows.length<2){toast("ឯកសារគ្មានទិន្នន័យ (ត្រូវមានក្បាលតារាង និងយ៉ាងហោចណាស់ ១ ជួរ)");return}
+  imp.type=($("#itype")||{}).value||"prod";imp.rows=rows;autoMap();POS.impMap()}
+function readFile(f){
+  const n=f.name.toLowerCase(),r=new FileReader();
+  if(/\.(html?|mhtml)$/.test(n)){
+    r.onload=()=>{try{const doc=new DOMParser().parseFromString(String(r.result),"text/html");let best=[];
+      doc.querySelectorAll("table").forEach(t=>{const rows=[...t.querySelectorAll("tr")].map(tr=>[...tr.children].filter(c=>/^(TD|TH)$/.test(c.tagName)).map(c=>c.textContent.replace(/\s+/g," ").trim())).filter(x=>x.length>1);if(rows.length>best.length)best=rows});
+      if(best.length<2){toast("រកមិនឃើញតារាងទំនិញក្នុងឯកសារ HTML នេះទេ");return}
+      setRows(best)}catch(e){toast("អានឯកសារមិនបាន")}};
+    r.readAsText(f,"UTF-8");return}
+  if(/\.(xlsx|xls)$/.test(n)){
+    if(!window.XLSX){toast("មិនអាចអាន Excel បានទេ សូមរក្សាទុកជា CSV ហើយព្យាយាមម្តងទៀត");return}
+    r.onload=()=>{try{const wb=XLSX.read(new Uint8Array(r.result),{type:"array"});let best=[];wb.SheetNames.forEach(s=>{const rows=XLSX.utils.sheet_to_json(wb.Sheets[s],{header:1,raw:false,defval:""});if(rows.length>best.length)best=rows});setRows(best)}catch(e){toast("អានឯកសារមិនបាន")}};
+    r.readAsArrayBuffer(f);
+  }else{r.onload=()=>{const u=new Uint8Array(r.result);let t,bad=false;
+      if((u[0]===0x50&&u[1]===0x4B)||u.slice(0,2000).includes(0)){toast("នេះជាឯកសារ ZIP ឬឯកសារទ្រង់ទ្រាយផ្សេង មិនមែនតារាងទេ សូមជ្រើសឯកសារ .html ឬ .xlsx ឬបិទភ្ជាប់ដោយដោយត្រង់");return}
+      if(u[0]===0xFF&&u[1]===0xFE)t=new TextDecoder("utf-16le").decode(u);
+      else if(u[0]===0xFE&&u[1]===0xFF)t=new TextDecoder("utf-16be").decode(u);
+      else{try{t=new TextDecoder("utf-8",{fatal:true}).decode(u)}catch(e){t=new TextDecoder("utf-8").decode(u);bad=true}}
+      if(bad)toast("ឯកសារមិនមែន UTF-8 អក្សរខ្មែរអាចខូច សូមបិទភ្ជាប់ដោយដោយត្រង់ ឬរក្សាទុកជា .xlsx");
+      setRows(parseText(t))};r.readAsArrayBuffer(f)}
+}
+function curMap(){const m={};FIELDS[imp.type].forEach(x=>{const e=$("#m-"+x[0]);m[x[0]]=e?parseInt(e.value,10):-1});return m}
+POS.importUI=function(){
+  modal("នាំចូលទិន្នន័យពីកម្មវិធីចាស់",`<div style="color:var(--muted)">នៅក្នុងកម្មវិធីលក់ចាស់ សូមរកប៊ូតុង Export / ទាញយក ដើម្បីរក្សាទុកបញ្ជីទំនិញជា Excel ឬ CSV ហើយជ្រើសឯកសារនោះនៅទីនេះ។ កម្មវិធីនឹងទាយជួរដោយស្វ័យប្រវត្តិ ហើយអ្នកអាចកែមុននាំចូល។</div>
+    <label>ប្រភេទទិន្នន័យ<select id="itype"><option value="prod">ទំនិញ (បារកូដ ឈ្មោះ តម្លៃ ស្តុក)</option><option value="cust">អតិថិជន (ឈ្មោះ ទូរស័ព្ទ)</option></select></label>
+    <label>ជ្រើសឯកសារ (.html .xlsx .xls .csv)<input type="file" id="impf" accept=".xlsx,.xls,.csv,.tsv,.txt,.html,.htm"></label>
+    <label>ឬ ចម្លងតារាងពី Excel មកបិទភ្ជាប់ (ជួរទីមួយជាក្បាលតារាង)<textarea id="impt" rows="5" placeholder="Barcode&#9;Name&#9;Price&#9;Stock"></textarea></label>`,
+    `<button class="btn gh" onclick="POS.close()">បិទ</button><button class="btn ok" onclick="POS.impPaste()">អានទិន្នន័យដែលបិទភ្ជាប់</button>`);
+  $("#impf").addEventListener("change",e=>{const f=e.target.files[0];if(f)readFile(f)});
+};
+POS.impPaste=function(){const t=$("#impt").value;if(!t.trim()){toast("សូមជ្រើសឯកសារ ឬ បិទភ្ជាប់ទិន្នន័យ");return}setRows(parseText(t))};
+POS.impMap=function(){
+  const head=imp.rows[0],f=FIELDS[imp.type],isP=imp.type==="prod";
+  modal("ផ្គូផ្គងជួរ ("+(imp.rows.length-1)+" ជួរទិន្នន័យ)",`<div style="color:var(--muted)">ពិនិត្យថាជួរនីមួយៗត្រូវនឹងព័ត៌មានត្រឹមត្រូវ។ កម្មវិធីបានទាយឱ្យរួចហើយ។</div>
+    <div class="f2">${f.map(x=>`<label>${x[1]}<select id="m-${x[0]}" onchange="POS.impPrev()"><option value="-1">— មិននាំចូល —</option>${head.map((h,i)=>`<option value="${i}" ${imp.map[x[0]]===i?"selected":""}>${esc(String(h==null?"":h).trim()||"ជួរ "+(i+1))}</option>`).join("")}</select></label>`).join("")}</div>
+    ${isP?`<div class="f2">
+      <label>តម្លៃក្នុងឯកសារជា<select id="icur"><option value="khr">រៀល (៛)</option><option value="usd">ដុល្លារ ($)</option></select></label>
+      <label>បើបារកូដមានរួចហើយ<select id="imode"><option value="update">ធ្វើបច្ចុប្បន្នភាពទំនិញនោះ</option><option value="skip">រំលង</option></select></label>
+      <label>ស្តុក<select id="istk"><option value="replace">ជំនួសស្តុកចាស់</option><option value="add">បូកបន្ថែមលើស្តុកចាស់</option></select></label>
+      ${S.sample&&!S.sales.length?`<label style="align-content:end"><span class="row" style="color:var(--fg)"><input type="checkbox" id="iclr" checked style="width:auto"> លុបទំនិញគំរូមុននាំចូល</span></label>`:""}
+    </div>`:""}
+    <div style="font-size:.85rem;color:var(--muted)">ទិដ្ឋភាពមុន (៥ ជួរដំបូង)</div><div class="scroll" id="iprev"></div>`,
+    `<button class="btn gh" onclick="POS.importUI()">ត្រឡប់ក្រោយ</button><button class="btn ok" onclick="POS.impGo()">នាំចូលឥឡូវនេះ</button>`);
+  $(".modal").style.width="min(920px,100%)";POS.impPrev();
+};
+POS.impPrev=function(){POS.impPrev0();const m=curMap(),body=imp.rows.slice(1),w=[],rc=String.fromCharCode(65533);
+  const bad=body.filter(r=>{const s=String(m.name>=0?r[m.name]||"":"");return s.includes("?")||s.includes(rc)}).length;
+  if(bad>body.length*.2)w.push("ឈ្មោះ "+bad+" ជួរមានសញ្ញា ? ឬប្រអប់ការ៉េ មានន័យថាអក្សរខ្មែរខូចក្នុងឯកសារ ត្រូវបិទភ្ជាប់ដោយដោយត្រង់ពីគេហទំព័រ");
+  if(imp.type==="prod"){if(m.price<0)w.push("មិនបានជ្រើសជួរតម្លៃលក់");else{const np=body.filter(r=>!num(r[m.price])).length;if(np)w.push("គ្មានតម្លៃលក់ "+np+" ជួរ (តម្លៃ 0)")}}
+  if(w.length)$("#iprev").insertAdjacentHTML("afterbegin",`<div style="color:var(--bad);padding:6px 0">⚠ ${w.map(esc).join("<br>⚠ ")}</div>`)};
+POS.impPrev0=function(){const m=curMap(),f=FIELDS[imp.type];
+  $("#iprev").innerHTML=`<table><thead><tr>${f.map(x=>`<th>${x[1]}</th>`).join("")}</tr></thead><tbody>${imp.rows.slice(1,6).map(r=>`<tr>${f.map(x=>`<td>${m[x[0]]>=0?esc(r[m[x[0]]]):"<span style='color:var(--muted)'>—</span>"}</td>`).join("")}</tr>`).join("")}</tbody></table>`};
+POS.impGo=function(){
+  const m=curMap();if(m.name<0){toast("សូមជ្រើសជួរឈ្មោះ");return}
+  const body=imp.rows.slice(1);
+  const g=(r,k)=>m[k]>=0?String(r[m[k]]==null?"":r[m[k]]).trim():"";
+  let a=0,u=0,s=0,b=0;
+  if(imp.type==="cust"){
+    body.forEach((r,i)=>{const n=g(r,"name");if(!n){b++;return}const ph=g(r,"phone");if(S.customers.some(c=>c.name===n&&c.phone===ph)){s++;return}S.customers.push({id:uid()+i,name:n,phone:ph});a++});
+  }else{
+    const mult=$("#icur").value==="usd"?S.rate:1,mode=$("#imode").value,stk=$("#istk").value,clr=$("#iclr");
+    if(clr&&clr.checked){S.products=[];S.ins=[];S.held=[];S.cats=[];cart=[];disc=0}
+    body.forEach((r,i)=>{
+      const n=g(r,"name");if(!n){b++;return}
+      const bc=g(r,"barcode").replace(/\s+/g,"");
+      const ex=bc?S.products.find(p=>p.barcode===bc):null;
+      const has=k=>m[k]>=0&&g(r,k)!=="";
+      const cat=g(r,"cat");if(cat&&!S.cats.includes(cat))S.cats.push(cat);
+      if(ex){
+        if(mode==="skip"){s++;return}
+        ex.name=n;if(cat)ex.cat=cat;
+        if(has("price"))ex.price=Math.round(num(g(r,"price"))*mult);
+        if(has("cost"))ex.cost=Math.round(num(g(r,"cost"))*mult);
+        if(has("stock"))ex.stock=stk==="add"?ex.stock+num(g(r,"stock")):num(g(r,"stock"));
+        if(has("min"))ex.min=num(g(r,"min"));
+        u++;
+      }else{
+        const c=cat||"ផ្សេងៗ";if(!S.cats.includes(c))S.cats.push(c);
+        S.products.push({id:uid()+"i"+i,barcode:bc||("P"+String(Date.now()).slice(-7)+i),name:n,cat:c,price:Math.round(num(g(r,"price"))*mult),cost:Math.round(num(g(r,"cost"))*mult),stock:has("stock")?num(g(r,"stock")):0,min:has("min")?num(g(r,"min")):5});
+        a++;
+      }
+    });
+    S.sample=false;
+  }
+  save();shell();
+  modal("នាំចូលរួចរាល់",`<div style="font-size:1.05rem">បន្ថែមថ្មី <b>${a}</b> · ធ្វើបច្ចុប្បន្នភាព <b>${u}</b> · រំលង <b>${s}</b>${b?` · មិនបានយក <b>${b}</b> (គ្មានឈ្មោះ)`:""}</div>`,`<button class="btn ok" onclick="POS.close()">បិទ</button>`);
+};
+POS.empty=function(){if(!confirmed("empty"))return;const sh=S.shop,r=S.rate,f=S.footer;S=seed();S.products=[];S.cats=[];S.sample=false;S.shop=sh;S.rate=r;S.footer=f;cart=[];save();view="sale";shell();toast("ចាប់ផ្តើមទទេរួចរាល់")};
+
+POS.delAll=function(){
+  modal("លុបទំនិញទាំងអស់",`<div style="color:var(--bad);font-weight:600">សកម្មភាពនេះមិនអាចត្រឡប់វិញបានទេ។ ទំនិញទាំង ${S.products.length} មុខនឹងត្រូវលុប។</div>
+    <label style="grid-auto-flow:column;justify-content:start;align-items:center;gap:8px;color:var(--fg)"><input type="checkbox" id="da-cat" checked style="width:auto">លុបប្រភេទទំនិញផងដែរ (${S.cats.length})</label>
+    <label style="grid-auto-flow:column;justify-content:start;align-items:center;gap:8px;color:var(--fg)"><input type="checkbox" id="da-ins" checked style="width:auto">លុបប្រវត្តិបញ្ចូលស្តុក (${S.ins.length})</label>
+    <label style="grid-auto-flow:column;justify-content:start;align-items:center;gap:8px;color:var(--fg)"><input type="checkbox" id="da-sale" style="width:auto">លុបប្រវត្តិលក់ និងវិក្កយបត្រផងដែរ (${S.sales.length})</label>`,
+    `<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn bad" onclick="POS.delAllGo()">លុបឥឡូវនេះ</button>`)
+};
+POS.delAllGo=function(){
+  const n=S.products.length;
+  S.products=[];S.held=[];cart=[];disc=0;S.sample=false;
+  if($("#da-cat").checked)S.cats=[];
+  if($("#da-ins").checked)S.ins=[];
+  if($("#da-sale").checked){S.sales=[];S.seq=0;S.shifts=[]}
+  save();shell();closeM();toast("បានលុបទំនិញ "+n+" មុខ")
+};
+
+/* ---------- shifts, reports, printing ---------- */
+const shifts=()=>S.shifts||(S.shifts=[]);
+const curShift=()=>shifts().find(x=>!x.close);
+const P=()=>Object.assign({paper:"80",copies:1,auto:false,font:12,addr:"",phone:""},S.print||{});
+const MN={cash:"សាច់ប្រាក់",qr:"QR / ABA",card:"កាត"};
+const dk2=k=>k.split("-").reverse().join("-");
+const tm=d=>{d=new Date(d);return pad(d.getHours())+":"+pad(d.getMinutes())};
+function embedded(){try{return window.top!==window.self}catch(e){return true}}
+const DOCCSS=".doc{background:#fff;color:#111;line-height:1.45}.doc h1{font-size:1.25em;margin:0;text-align:center}.doc .c{text-align:center}.doc .pl{display:flex;justify-content:space-between;gap:8px}.doc .pl span{min-width:0;overflow-wrap:anywhere}.doc hr{border:0;border-top:1px dashed #555;margin:6px 0}.doc table{width:100%;border-collapse:collapse}.doc td,.doc th{padding:2px 0;text-align:left;vertical-align:top;background:none;color:#111;border:0;position:static}.doc .r{text-align:right}.doc b{font-weight:700}.doc .sm{font-size:.85em;color:#333}";
+document.head.insertAdjacentHTML("beforeend","<style>"+DOCCSS+".mb .doc{padding:12px;border:1px dashed #999;border-radius:6px}.ell{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}</style>");
+function stats(list){
+  const r={n:0,total:0,disc:0,cost:0,cash:0,qr:0,card:0,items:{}};
+  list.forEach(s=>{if(s.void)return;r.n++;r.total+=s.total;r.disc+=s.disc||0;r[s.method]=(r[s.method]||0)+s.total;
+    s.items.forEach(i=>{r.cost+=i.cost*i.qty;const t=r.items[i.name]||(r.items[i.name]={q:0,r:0});t.q+=i.qty;t.r+=i.price*i.qty})});
+  r.profit=r.total-r.cost;return r}
+function shiftChip(){const c=curShift();
+  if(!c)return `<button class="chip o" onclick="POS.openShift()">បើកវេនលក់</button>`;
+  const st=stats(S.sales.filter(s=>s.shift===c.id));
+  return `<button class="chip o" onclick="POS.closeShift()">វេន #${c.no} · ${money(st.total)} · បិទវេន</button>`}
+
+/* printing */
+function printHelp(){modal("ការបោះពុម្ពមិនដំណើរការនៅទីនេះ",`<div>ទំព័រនេះកំពុងបើកក្នុង Claude ដែលហាមឃាត់ការបោះពុម្ព។ ដើម្បីបោះពុម្ពចេញមកពិតៗ សូមទាញយកកម្មវិធីជាឯកសារ .html ទៅរក្សាទុកក្នុងកុំព្យូទ័រ ហើយបើកវាក្នុង Chrome។</div><div style="color:var(--muted)">ចង់ឱ្យចេញពីម៉ាស៊ីនព្រីនភ្លាមៗ មិនបាច់ចុច Print៖ បើក Chrome ដោយបន្ថែម <b>--kiosk-printing</b> ក្នុង Shortcut ហើយកំណត់ម៉ាស៊ីនព្រីនវិក្កយបត្រជា Default Printer។</div>`,`<button class="btn ok" onclick="POS.close()">យល់ព្រម</button>`)}
+function doPrint(body,copies){
+  if(embedded()){printHelp();return}
+  const p=P(),w=p.paper,roll=w==="58"||w==="80",wd=w==="58"?"54mm":"76mm";
+  const old=document.getElementById("pf");if(old)old.remove();
+  const f=document.createElement("iframe");f.id="pf";f.setAttribute("aria-hidden","true");f.style.cssText="position:fixed;right:0;bottom:0;width:0;height:0;border:0";document.body.appendChild(f);
+  const d=f.contentWindow.document;d.open();
+  d.write(`<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;700&display=swap"><style>@page{size:${roll?w+"mm auto":w};margin:${roll?"2mm":"12mm"}}html,body{margin:0;background:#fff}body{font-family:"Kantumruy Pro","Noto Sans Khmer","Khmer OS",sans-serif;font-size:${p.font}px;width:${roll?wd:"auto"}}${DOCCSS}</style></head><body>${body}</body></html>`);
+  d.close();
+  const n=copies||Math.max(1,p.copies);
+  for(let i=0;i<n;i++)setTimeout(()=>{try{f.contentWindow.focus();f.contentWindow.print()}catch(e){toast("បោះពុម្ពមិនបាន")}},600+i*1500);
+}
+function receiptHTML(s){const p=P();
+  return `<div class="doc"><h1>${esc(S.shop)}</h1>${p.addr?`<div class="c sm">${esc(p.addr)}</div>`:""}${p.phone?`<div class="c sm">ទូរស័ព្ទ ${esc(p.phone)}</div>`:""}
+  <hr><div class="c"><b>វិក្កយបត្រលក់</b>${s.void?" (លុបចោល)":""}</div>
+  <div class="pl sm"><span>លេខ</span><span>${esc(s.no)}</span></div>
+  <div class="pl sm"><span>កាលបរិច្ឆេទ</span><span>${dstr(s.date)}</span></div>
+  <div class="pl sm"><span>អតិថិជន</span><span>${esc(s.customer)}</span></div><hr>
+  <table>${s.items.map(i=>`<tr><td colspan="2">${esc(i.name)}</td></tr><tr><td class="sm">${i.qty} × ${fmt(i.price)}</td><td class="r">${fmt(i.price*i.qty)}</td></tr>`).join("")}</table><hr>
+  <div class="pl"><span>សរុបរង</span><span>${fmt(s.sub)}</span></div>
+  ${s.disc?`<div class="pl"><span>បញ្ចុះតម្លៃ</span><span>-${fmt(s.disc)}</span></div>`:""}
+  <div class="pl" style="font-size:1.15em"><b>សរុប</b><b>${fmt(s.total)}៛</b></div>
+  <div class="pl sm"><span>≈ ដុល្លារ</span><span>$${(s.total/S.rate).toFixed(2)}</span></div>
+  <div class="pl"><span>បង់តាម ${MN[s.method]||""}</span><span>${fmt(s.paid)}</span></div>
+  <div class="pl"><span>អាប់លុយ</span><span>${fmt(s.change)}</span></div><hr>
+  <div class="c">${esc(S.footer)}</div></div>`}
+function shiftHTML(sh){const st=stats(S.sales.filter(s=>s.shift===sh.id)),exp=sh.openCash+st.cash;
+  const items=Object.entries(st.items).sort((a,b)=>b[1].q-a[1].q);
+  return `<div class="doc"><h1>${esc(S.shop)}</h1><div class="c"><b>របាយការណ៍វេន #${sh.no}</b></div><hr>
+  <div class="pl sm"><span>អ្នកគិតលុយ</span><span>${esc(sh.cashier)}</span></div>
+  <div class="pl sm"><span>បើក</span><span>${dstr(sh.open)}</span></div>
+  <div class="pl sm"><span>បិទ</span><span>${sh.close?dstr(sh.close):"កំពុងបើក"}</span></div><hr>
+  <div class="pl"><span>វិក្កយបត្រ</span><span>${st.n}</span></div>
+  <div class="pl"><span>សាច់ប្រាក់</span><span>${fmt(st.cash)}</span></div>
+  <div class="pl"><span>QR / ABA</span><span>${fmt(st.qr)}</span></div>
+  <div class="pl"><span>កាត</span><span>${fmt(st.card)}</span></div>
+  <div class="pl"><span>បញ្ចុះតម្លៃ</span><span>${fmt(st.disc)}</span></div>
+  <div class="pl" style="font-size:1.1em"><b>សរុបលក់</b><b>${fmt(st.total)}៛</b></div><hr>
+  <div class="pl"><span>ប្រាក់ដើម</span><span>${fmt(sh.openCash)}</span></div>
+  <div class="pl"><span>ត្រូវមានក្នុងថត</span><span>${fmt(exp)}</span></div>
+  ${sh.close?`<div class="pl"><span>រាប់បាន</span><span>${fmt(sh.closeCash)}</span></div><div class="pl"><b>ភាពខុសគ្នា</b><b>${sh.diff>0?"+":""}${fmt(sh.diff)}</b></div>`:""}
+  ${sh.note?`<div class="sm">ចំណាំ៖ ${esc(sh.note)}</div>`:""}<hr>
+  <div class="c sm"><b>ទំនិញលក់បាន</b></div>
+  <table>${items.map(([n,t])=>`<tr><td>${esc(n)}</td><td class="r">${t.q}</td><td class="r">${fmt(t.r)}</td></tr>`).join("")}</table></div>`}
+function reportHTML(f,t){
+  const ss=S.sales.filter(s=>{const k=dkey(s.date);return k>=f&&k<=t}),st=stats(ss);
+  const items=Object.entries(st.items).sort((a,b)=>b[1].q-a[1].q);
+  const label=f.startsWith("0000")?"ទាំងអស់":(f===t?dk2(f):dk2(f)+" ដល់ "+dk2(t));
+  return `<div class="doc"><h1>${esc(S.shop)}</h1><div class="c"><b>របាយការណ៍លក់</b></div><div class="c sm">${label}</div><hr>
+  <div class="pl"><span>វិក្កយបត្រ</span><span>${st.n}</span></div>
+  <div class="pl"><span>សាច់ប្រាក់</span><span>${fmt(st.cash)}</span></div>
+  <div class="pl"><span>QR / ABA</span><span>${fmt(st.qr)}</span></div>
+  <div class="pl"><span>កាត</span><span>${fmt(st.card)}</span></div>
+  <div class="pl"><span>បញ្ចុះតម្លៃ</span><span>${fmt(st.disc)}</span></div>
+  <div class="pl" style="font-size:1.1em"><b>សរុបលក់</b><b>${fmt(st.total)}៛</b></div>
+  <div class="pl"><span>ប្រាក់ចំណេញ</span><span>${fmt(st.profit)}</span></div><hr>
+  <div class="c sm"><b>ទំនិញលក់បាន</b></div>
+  <table>${items.map(([n,x])=>`<tr><td>${esc(n)}</td><td class="r">${x.q}</td><td class="r">${fmt(x.r)}</td></tr>`).join("")}</table></div>`}
+POS.printSale=function(id){const s=S.sales.find(x=>x.id===id);if(s)doPrint(receiptHTML(s))};
+POS.printShift=function(id){const sh=shifts().find(x=>x.id===id);if(sh)doPrint(shiftHTML(sh),1)};
+POS.receipt=function(id,fresh){const s=S.sales.find(x=>x.id===id);if(!s)return;
+  modal(fresh?"ការលក់បានជោគជ័យ":"វិក្កយបត្រ",receiptHTML(s),
+  `${s.void?"":`<button class="btn bad" onclick="POS.void('${s.id}')">លុបចោល (ត្រឡប់ស្តុក)</button>`}<button class="btn" onclick="POS.printSale('${s.id}')">🖨 បោះពុម្ព</button><button class="btn ok" onclick="POS.close()">បិទ</button>`)};
+POS.testPrint=function(){const n=Date.now();doPrint(receiptHTML({no:"TEST-0001",date:n,customer:"សាកល្បង",items:[{name:"ទំនិញសាកល្បង A",qty:2,price:5000,cost:0},{name:"ទំនិញសាកល្បង B",qty:1,price:2000,cost:0}],sub:12000,disc:0,total:12000,paid:20000,change:8000,method:"cash"}),1)};
+
+/* shifts */
+POS.openShift=function(force){
+  if(curShift()){toast("វេនកំពុងបើករួចហើយ");return}
+  const last=shifts().filter(x=>x.close).slice(-1)[0];
+  modal("បើកវេនលក់",`${force?'<div style="color:var(--warn)">សូមបើកវេនសិន មុនគិតលុយ។</div>':""}
+    <div class="f2"><label>ឈ្មោះអ្នកគិតលុយ<input id="so-n" value="${esc(last?last.cashier:"")}" placeholder="ឧ. សុភា"></label>
+    <label>ប្រាក់ដើមក្នុងថត (៛)<input id="so-c" inputmode="numeric" value="${last?last.closeCash||0:0}"></label></div>
+    <div style="color:var(--muted);font-size:.85rem">ប្រាក់ដើមត្រូវបានដាក់ពីចំនួនរាប់បាននៅពេលបិទវេនចុងក្រោយ។ អ្នកអាចកែបាន។</div>`,
+    `<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.openGo()">បើកវេន</button>`)};
+POS.openGo=function(){const today=dkey(new Date());const n=shifts().filter(x=>dkey(x.open)===today).length+1;
+  shifts().push({id:uid(),no:n,open:Date.now(),openCash:Math.round(num($("#so-c").value)),cashier:$("#so-n").value.trim()||"អ្នកគិតលុយ",close:null});
+  save();closeM();shell();toast("បានបើកវេន #"+n)};
+POS.closeShift=function(){const c=curShift();if(!c)return;
+  const st=stats(S.sales.filter(s=>s.shift===c.id)),exp=c.openCash+st.cash;
+  modal("បិទវេន #"+c.no,`<div style="display:grid;gap:4px">
+    <div class="row" style="justify-content:space-between"><span>បើកវេនម៉ោង</span><b>${dstr(c.open)}</b></div>
+    <div class="row" style="justify-content:space-between"><span>វិក្កយបត្រ</span><b class="num">${st.n}</b></div>
+    <div class="row" style="justify-content:space-between"><span>សាច់ប្រាក់</span><b class="num">${money(st.cash)}</b></div>
+    <div class="row" style="justify-content:space-between"><span>QR / ABA</span><b class="num">${money(st.qr)}</b></div>
+    <div class="row" style="justify-content:space-between"><span>កាត</span><b class="num">${money(st.card)}</b></div>
+    <div class="row" style="justify-content:space-between;font-size:1.1rem"><span>សរុបលក់</span><b class="num">${money(st.total)}</b></div>
+    <div class="row" style="justify-content:space-between"><span>ប្រាក់ដើម</span><b class="num">${money(c.openCash)}</b></div>
+    <div class="row" style="justify-content:space-between;font-size:1.1rem"><span>ប្រាក់សាច់ត្រូវមានក្នុងថត</span><b class="num">${money(exp)}</b></div></div>
+    <label>ប្រាក់ដែលរាប់បានជាក់ស្តែង (៛)<input id="sc-c" inputmode="numeric" value="${exp}" oninput="POS.scDiff(${exp})"></label>
+    <div class="row" style="justify-content:space-between"><span>ភាពខុសគ្នា</span><b id="sc-d" style="color:var(--ok)">0៛</b></div>
+    <label>កំណត់ចំណាំ<input id="sc-n"></label>`,
+    `<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn bad" onclick="POS.closeGo()">បិទវេន</button>`);
+  const e=$("#sc-c");if(e){e.focus();e.select()}};
+POS.scDiff=function(exp){const d=Math.round(num($("#sc-c").value))-exp,e=$("#sc-d");e.textContent=(d>0?"+":"")+fmt(d)+"៛";e.style.color=d===0?"var(--ok)":d>0?"var(--warn)":"var(--bad)"};
+POS.closeGo=function(){const c=curShift();if(!c)return;
+  const st=stats(S.sales.filter(s=>s.shift===c.id)),exp=c.openCash+st.cash,cnt=Math.round(num($("#sc-c").value));
+  c.close=Date.now();c.closeCash=cnt;c.expected=exp;c.diff=cnt-exp;c.note=$("#sc-n").value.trim();
+  save();shell();POS.shiftReport(c.id,true);if(P().auto&&!embedded())POS.printShift(c.id)};
+POS.shiftReport=function(id){const sh=shifts().find(x=>x.id===id);if(!sh)return;
+  modal("របាយការណ៍វេន #"+sh.no,shiftHTML(sh),`<button class="btn" onclick="POS.printShift('${sh.id}')">🖨 បោះពុម្ព</button><button class="btn ok" onclick="POS.close()">បិទ</button>`)};
+
+/* history by day */
+let hd="";
+POS.histD=function(v){hd=v==="y"?dkey(new Date(Date.now()-864e5)):v;vHist2()};
+function vHist2(){
+  const t=dkey(new Date()),day=hd===""?t:hd;
+  const list=S.sales.filter(s=>hd==="all"||dkey(s.date)===day).slice().reverse(),st=stats(list);
+  $("#main").innerHTML=`<div class="page"><div class="bar">
+    <input type="date" id="hdv" value="${hd==="all"?"":day}" style="width:auto" onchange="POS.histD(this.value)">
+    <button class="btn ${hd!=="all"&&day===t?"":"gh"}" onclick="POS.histD('')">ថ្ងៃនេះ</button><button class="btn gh" onclick="POS.histD('y')">ម្សិលមិញ</button><button class="btn ${hd==="all"?"":"gh"}" onclick="POS.histD('all')">ទាំងអស់</button>
+    <span class="grow"></span><span>វិក្កយបត្រ <b>${st.n}</b> · សរុប <b class="num">${money(st.total)}</b></span></div>
+    <div class="pane"><div class="scroll"><table><thead><tr><th>លេខវិក្កយបត្រ</th><th>កាលបរិច្ឆេទ</th><th>អតិថិជន</th><th>ទំនិញដែលលក់</th><th>បង់តាម</th><th class="r">សរុប</th><th></th></tr></thead><tbody>
+    ${list.map(s=>`<tr style="${s.void?"opacity:.5;text-decoration:line-through":""}"><td>${esc(s.no)}</td><td>${dstr(s.date)}</td><td>${esc(s.customer)}</td><td><div class="ell">${esc(s.items.map(i=>i.name+" ×"+i.qty).join(", "))}</div></td><td>${MN[s.method]||""}</td><td class="r num">${money(s.total)}</td>
+    <td class="r" style="white-space:nowrap"><button class="btn gh" style="padding:4px 10px" onclick="POS.receipt('${s.id}')">មើល</button> <button class="btn" style="padding:4px 10px" onclick="POS.printSale('${s.id}')">🖨</button></td></tr>`).join("")||`<tr><td colspan="7" class="empty">គ្មានការលក់ក្នុងថ្ងៃនេះ</td></tr>`}
+    </tbody></table></div></div></div>`}
+
+/* reports */
+let rep={p:"today",from:"",to:""};
+function repRange(){const n=new Date(),t=dkey(n);
+  if(rep.p==="today")return[t,t];
+  if(rep.p==="yday"){const y=dkey(new Date(n.getTime()-864e5));return[y,y]}
+  if(rep.p==="7")return[dkey(new Date(n.getTime()-6*864e5)),t];
+  if(rep.p==="30")return[dkey(new Date(n.getTime()-29*864e5)),t];
+  if(rep.p==="all")return["0000-00-00","9999-99-99"];
+  const f=rep.from||t;return[f,rep.to||f]}
+POS.repP=function(p){rep={p:p,from:"",to:""};vReport2()};
+POS.repC=function(){const f=$("#rf").value,t=$("#rt").value;if(!f){toast("សូមជ្រើសថ្ងៃចាប់ផ្តើម");return}rep={p:"custom",from:f,to:t||f};vReport2()};
+POS.repDay=function(k){rep={p:"custom",from:k,to:k};vReport2()};
+POS.repPrint=function(){const r=repRange();doPrint(reportHTML(r[0],r[1]),1)};
+function vReport2(){
+  const r=repRange(),f=r[0],t=r[1];
+  const ss=S.sales.filter(s=>{const k=dkey(s.date);return k>=f&&k<=t}),st=stats(ss);
+  const items=Object.entries(st.items).sort((a,b)=>b[1].q-a[1].q);
+  const byDay={};ss.forEach(s=>{if(s.void)return;const k=dkey(s.date),d=byDay[k]||(byDay[k]={n:0,t:0,c:0});d.n++;d.t+=s.total;d.c+=s.items.reduce((a,i)=>a+i.cost*i.qty,0)});
+  const days=Object.keys(byDay).sort().reverse();
+  const shs=shifts().filter(x=>{const k=dkey(x.open);return k>=f&&k<=t}).slice().reverse();
+  const PB=[["today","ថ្ងៃនេះ"],["yday","ម្សិលមិញ"],["7","៧ ថ្ងៃ"],["30","៣០ ថ្ងៃ"],["all","ទាំងអស់"]];
+  const vf=rep.p==="custom"?rep.from:(f.startsWith("0000")?"":f),vt=rep.p==="custom"?rep.to:(t.startsWith("9999")?"":t);
+  $("#main").innerHTML=`<div class="page">
+  <div class="bar">${PB.map(x=>`<button class="btn ${rep.p===x[0]?"":"gh"}" onclick="POS.repP('${x[0]}')">${x[1]}</button>`).join("")}
+    <span class="row"><input type="date" id="rf" value="${vf}" style="width:auto"><span>ដល់</span><input type="date" id="rt" value="${vt}" style="width:auto"></span>
+    <button class="btn" onclick="POS.repC()">មើល</button><button class="btn ok" onclick="POS.repPrint()">🖨 បោះពុម្ពរបាយការណ៍</button></div>
+  <div class="kpis"><div class="pane kpi"><span>ចំណូលសរុប</span><b>${money(st.total)}</b></div><div class="pane kpi"><span>ប្រាក់ចំណេញ</span><b style="color:var(--ok)">${money(st.profit)}</b></div>
+    <div class="pane kpi"><span>ចំនួនវិក្កយបត្រ</span><b>${st.n}</b></div><div class="pane kpi"><span>ជាមធ្យម / វិក្កយបត្រ</span><b>${money(st.n?st.total/st.n:0)}</b></div><div class="pane kpi"><span>បញ្ចុះតម្លៃ</span><b>${money(st.disc)}</b></div></div>
+  <div class="pane"><h3>បែងចែកតាមការបង់ប្រាក់</h3><div class="mb">សាច់ប្រាក់ <b class="num">${money(st.cash)}</b> · QR / ABA <b class="num">${money(st.qr)}</b> · កាត <b class="num">${money(st.card)}</b></div></div>
+  <div class="pane"><h3>លក់តាមថ្ងៃ (ចុចជួរដើម្បីមើលថ្ងៃនោះ)</h3><div class="scroll"><table><thead><tr><th>ថ្ងៃ</th><th class="r">វិក្កយបត្រ</th><th class="r">សរុប</th><th class="r">ចំណេញ</th></tr></thead><tbody>
+    ${days.map(k=>`<tr style="cursor:pointer" onclick="POS.repDay('${k}')"><td>${dk2(k)}</td><td class="r num">${byDay[k].n}</td><td class="r num">${money(byDay[k].t)}</td><td class="r num">${money(byDay[k].t-byDay[k].c)}</td></tr>`).join("")||`<tr><td colspan="4" class="empty">មិនទាន់មានការលក់</td></tr>`}</tbody></table></div></div>
+  <div class="pane"><h3>ទំនិញដែលលក់បាន</h3><div class="scroll"><table><thead><tr><th>ទំនិញ</th><th class="r">ចំនួន</th><th class="r">ចំណូល</th></tr></thead><tbody>
+    ${items.map(([n,x])=>`<tr><td>${esc(n)}</td><td class="r num">${x.q}</td><td class="r num">${money(x.r)}</td></tr>`).join("")||`<tr><td colspan="3" class="empty">មិនទាន់មានការលក់</td></tr>`}</tbody></table></div></div>
+  <div class="pane"><h3>វេនលក់</h3><div class="scroll"><table><thead><tr><th>វេន</th><th>ម៉ោង</th><th>អ្នកគិតលុយ</th><th class="r">លក់សរុប</th><th class="r">ត្រូវមាន</th><th class="r">រាប់បាន</th><th class="r">ខុសគ្នា</th><th></th></tr></thead><tbody>
+    ${shs.map(sh=>{const x=stats(S.sales.filter(s=>s.shift===sh.id));return `<tr><td>${dk2(dkey(sh.open))} #${sh.no}</td><td>${tm(sh.open)} - ${sh.close?tm(sh.close):"កំពុងបើក"}</td><td>${esc(sh.cashier)}</td><td class="r num">${money(x.total)}</td><td class="r num">${money(sh.openCash+x.cash)}</td><td class="r num">${sh.close?money(sh.closeCash):"-"}</td><td class="r num" style="color:${sh.close&&sh.diff!==0?"var(--bad)":"var(--ok)"}">${sh.close?(sh.diff>0?"+":"")+fmt(sh.diff):"-"}</td><td class="r"><button class="btn gh" style="padding:4px 10px" onclick="POS.shiftReport('${sh.id}')">មើល</button></td></tr>`}).join("")||`<tr><td colspan="8" class="empty">មិនទាន់មានវេន</td></tr>`}</tbody></table></div></div></div>`}
+
+/* settings */
+function vSet2(){const p=P();
+  $("#main").innerHTML=`<div class="page"><div class="pane"><h3>ការកំណត់ហាង</h3><div class="mb">
+  <label>ឈ្មោះហាង<input id="s1" value="${esc(S.shop)}"></label>
+  <div class="f2"><label>អាសយដ្ឋាន (បោះពុម្ពលើវិក្កយបត្រ)<input id="sa" value="${esc(p.addr)}"></label><label>លេខទូរស័ព្ទហាង<input id="sp" value="${esc(p.phone)}"></label></div>
+  <label>អត្រាប្តូរប្រាក់ (១ ដុល្លារ = ? រៀល)<input id="s2" inputmode="numeric" value="${S.rate}"></label>
+  <label>សារចុងវិក្កយបត្រ<input id="s3" value="${esc(S.footer)}"></label>
+  <label>លក់ពេលស្តុកអស់ ឬ មិនគ្រប់<select id="s4"><option value="1">អនុញ្ញាត (ស្តុកអាចអវិជ្ជមាន)</option><option value="0">មិនអនុញ្ញាត</option></select></label></div></div>
+  <div class="pane"><h3>ការបោះពុម្ព</h3><div class="mb">
+  <div class="f2"><label>ទំហំក្រដាស<select id="p1"><option value="58">វិក្កយបត្រ 58mm</option><option value="80">វិក្កយបត្រ 80mm</option><option value="A5">A5</option><option value="A4">A4</option></select></label>
+  <label>ចំនួនច្បាប់ចម្លង (១-៥)<input id="p2" inputmode="numeric" value="${p.copies}"></label></div>
+  <div class="f2"><label>ទំហំអក្សរ (px)<input id="p3" inputmode="numeric" value="${p.font}"></label>
+  <label>បោះពុម្ពក្រោយគិតលុយ<select id="p4"><option value="0">មិនបោះដោយស្វ័យប្រវត្តិ</option><option value="1">បោះពុម្ពភ្លាម</option></select></label></div>
+  <div class="bar"><button class="btn" onclick="POS.testPrint()">🖨 សាកល្បងបោះពុម្ព</button></div>
+  <div style="color:var(--muted);font-size:.85rem">ការបោះពុម្ពដំណើរការតែពេលបើកកម្មវិធីជាឯកសារ .html ក្នុង Chrome នៅកុំព្យូទ័រ។ បើចង់ឱ្យចេញភ្លាមៗ សូមបើក Chrome ជាមួយ <b>--kiosk-printing</b> ហើយកំណត់ម៉ាស៊ីនព្រីនជា Default។</div></div></div>
+  <div class="bar"><button class="btn ok" onclick="POS.saveSet()">រក្សាទុកការកំណត់ទាំងអស់</button></div>
+  <div class="pane"><h3>ទិន្នន័យ</h3><div class="mb"><div style="color:var(--muted)">ប្រវត្តិលក់ ស្តុក និងវេន ត្រូវបានរក្សាទុកដោយស្វ័យប្រវត្តិក្នុងកម្មវិធីរុករកនេះរាល់ពេលលក់។</div>
+  <div class="bar"><button class="btn ok" onclick="POS.importUI()">⬆ នាំចូលពីកម្មវិធីចាស់</button><button class="btn" onclick="POS.backup()">💾 បម្រុងទុក / ស្តារទិន្នន័យ</button><button class="btn warn" onclick="POS.empty()">ចាប់ផ្តើមទទេ (លុបទំនិញគំរូ)</button><button class="btn bad" onclick="POS.reset()">ត្រឡប់ទៅទិន្នន័យគំរូ</button></div></div></div></div>`;
+  $("#s4").value=S.neg===false?"0":"1";$("#p1").value=p.paper;$("#p4").value=p.auto?"1":"0"}
+POS.saveSet=function(){
+  S.shop=$("#s1").value.trim()||"Sethika Mart";S.rate=parseFloat($("#s2").value)||4100;S.footer=$("#s3").value;S.neg=$("#s4").value==="1";
+  S.print={paper:$("#p1").value,copies:Math.max(1,Math.min(5,parseInt($("#p2").value,10)||1)),font:Math.max(8,Math.min(24,parseInt($("#p3").value,10)||12)),auto:$("#p4").value==="1",addr:$("#sa").value.trim(),phone:$("#sp").value.trim()};
+  save();shell();toast("បានរក្សាទុក")};
+POS.backup=function(){
+  modal("បម្រុងទុក / ស្តារទិន្នន័យ",`<div style="color:var(--muted)">ចម្លងអក្សរខាងក្រោមទៅរក្សាទុកជាឯកសារ ដើម្បីបម្រុងទុក។ ដើម្បីស្តារ សូមបិទភ្ជាប់អក្សរបម្រុងមកជំនួសក្នុងប្រអប់នេះ ហើយចុច «ស្តារ»។</div><textarea id="bk" rows="8" style="font-size:.75rem">${esc(JSON.stringify(S))}</textarea>`,
+  `<button class="btn gh" onclick="POS.close()">បិទ</button><button class="btn" id="bkc" onclick="POS.bkCopy()">ចម្លង</button><button class="btn bad" onclick="POS.bkRestore()">ស្តារ</button>`)};
+POS.bkCopy=function(){const e=$("#bk");e.select();try{navigator.clipboard.writeText(e.value).then(()=>{$("#bkc").textContent="បានចម្លង ✓"},()=>toast("សូមចុច Ctrl+C"))}catch(x){toast("សូមចុច Ctrl+C")}};
+POS.bkRestore=function(){let d;try{d=JSON.parse($("#bk").value)}catch(e){toast("អក្សរបម្រុងមិនត្រឹមត្រូវ");return}
+  if(!d||!Array.isArray(d.products)||!Array.isArray(d.sales)){toast("មិនមែនទិន្នន័យបម្រុងរបស់កម្មវិធីនេះទេ");return}
+  if(!confirmed("bk"))return;S=d;cart=[];save();view="sale";shell();closeM();toast("បានស្តារទិន្នន័យ")};
+
+/* two-tap confirmation (confirm() is blocked in artifacts) */
+let pend=null,pendT=0;
+function confirmed(k){if(pend===k&&Date.now()-pendT<4000){pend=null;return true}pend=k;pendT=Date.now();toast("ចុចម្តងទៀតដើម្បីបញ្ជាក់");return false}
+window.POS=POS;
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&$("#ov"))closeM();
+  if(view==="sale"&&!$("#ov")&&e.key.length===1&&!e.ctrlKey&&!e.metaKey&&!e.altKey){const a=document.activeElement;if(!a||!/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)){const s=$("#scan");if(s)s.focus()}}
+  if(e.key==="F9"&&view==="sale"&&!$("#ov")){e.preventDefault();POS.pay()}
+});
+shell();
+setTimeout(()=>{if(!curShift()&&!$("#ov"))POS.openShift()},500);
+})();
+</script>
+
+</body></html>
