@@ -5,15 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Sethika POS</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="style.css">
-</head>
-<body>
-<div class="app" id="app"><div class="login"><div class="lcard"><h1>Sethika POS</h1><div class="sub">កំពុងផ្ទុក...</div></div></div></div>
-<div id="layer"></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="app.js"></script>
-</body>
-</html>
+<style>
+/* Layout: blue top bar like S7POS; login gate; left cart + right catalog; tabs for stock, history, report, settings */
 :root{
   --bg:#eaf0f8; --panel:#ffffff; --panel2:#f3f6fb; --fg:#1b2638; --muted:#5f6e88; --line:#d6dfec;
   --brand:#1e3a78; --brand-fg:#ffffff; --brand2:#2f64c4; --ok:#1c9a62; --warn:#d98314; --bad:#d3435b; --accent:#f08a24;
@@ -132,3 +125,861 @@ label{font-size:.85rem;color:var(--muted);display:grid;gap:3px}
   .top .shop{width:100%}
 }
 @media (prefers-reduced-motion:no-preference){.modal{animation:pop .12s ease-out}@keyframes pop{from{transform:scale(.97);opacity:0}}}
+</style>
+</head>
+<body>
+<div class="app" id="app"><div class="login"><div class="lcard"><h1>Sethika POS</h1><div class="sub">កំពុងផ្ទុក...</div></div></div></div>
+<div id="layer"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+(function(){
+"use strict";
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt=n=>Math.round((n||0)*100)/100===Math.round(n||0)?Math.round(n||0).toLocaleString("en-US"):(Math.round((n||0)*100)/100).toLocaleString("en-US");
+const money=n=>fmt(n)+"៛";
+const pad=n=>String(n).padStart(2,"0");
+const dstr=d=>{d=new Date(d);return pad(d.getDate())+"-"+pad(d.getMonth()+1)+"-"+d.getFullYear()+" "+pad(d.getHours())+":"+pad(d.getMinutes())};
+const dkey=d=>{d=new Date(d);return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())};
+const dk2=k=>k.split("-").reverse().join("-");
+const tm=d=>{d=new Date(d);return pad(d.getHours())+":"+pad(d.getMinutes())};
+const num=v=>{const n=parseFloat(String(v==null?"":v).replace(/[^\d.\-]/g,""));return isNaN(n)?0:n};
+const rid=()=>{const a=new Uint8Array(9),c="abcdefghijklmnopqrstuvwxyz0123456789";crypto.getRandomValues(a);return Array.from(a,x=>c[x%36]).join("")};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function sha(s){try{const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));return Array.from(new Uint8Array(b),x=>x.toString(16).padStart(2,"0")).join("")}catch(e){let h=5381;for(const c of s)h=((h<<5)+h+c.charCodeAt(0))>>>0;return "x"+h.toString(16)}}
+const pinHash=(id,pin)=>sha("sethika|"+id+"|"+pin);
+const MN={cash:"សាច់ប្រាក់",qr:"QR / ABA",card:"កាត"};
+const COLORS=["#2f64c4","#1c9a62","#d98314","#8a4fc4","#d3435b","#0f8f9c","#6b7a2a","#c2569a"];
+
+/* ================= local fallback store (same API as the shared db) ================= */
+function LocalDB(key){
+  let data={};try{data=JSON.parse(localStorage.getItem(key)||"{}")}catch(e){data={}}
+  const subs=new Set();let pt=0;
+  const persist=()=>{clearTimeout(pt);pt=setTimeout(()=>{try{localStorage.setItem(key,JSON.stringify(data))}catch(e){}},300)};
+  const split=p=>{const i=p.lastIndexOf("/");return[p.slice(0,i),p.slice(i+1)]};
+  const clone=o=>o===undefined?undefined:JSON.parse(JSON.stringify(o));
+  const isO=v=>v&&typeof v==="object"&&!Array.isArray(v);
+  const merge=(a,b)=>{for(const k in b){if(isO(b[k])&&isO(a[k]))merge(a[k],b[k]);else a[k]=clone(b[k])}return a};
+  const meta={fromCache:false,hasPendingWrites:false};
+  const sd=(id,d)=>({id,exists:d!==undefined,data:()=>d,metadata:meta});
+  const cmp=(v,op,w)=>op==="=="?v===w:op==="!="?v!==w:op==="<"?v<w:op==="<="?v<=w:op===">"?v>w:op===">="?v>=w:false;
+  function run(coll,q){
+    let a=Object.entries(data[coll]||{});
+    for(const f of q.f)a=a.filter(e=>cmp(e[1][f[0]],f[1],f[2]));
+    if(q.o){const k=q.o[0],dir=q.o[1]==="desc"?-1:1;a.sort((x,y)=>{const u=x[1][k],v=y[1][k];return u===v?0:(u===undefined?1:v===undefined?-1:(u<v?-dir:dir))})}
+    else a.sort((x,y)=>x[0]<y[0]?-1:x[0]>y[0]?1:0);
+    if(q.l)a=a.slice(0,q.l);
+    const docs=a.map(e=>sd(e[0],e[1]));
+    return{docs,size:docs.length,empty:!docs.length,metadata:meta};
+  }
+  function notify(c,path){subs.forEach(s=>{if(s.doc?s.path===path:s.coll===c)Promise.resolve().then(()=>{if(subs.has(s))s.next(s.doc?sd(split(path)[1],(data[c]||{})[split(path)[1]]):run(s.coll,s.q))})})}
+  function write(path,fn){const[c,id]=split(path);const cur=(data[c]||{})[id];const nv=fn(cur);if(nv===null){if(data[c])delete data[c][id]}else{(data[c]=data[c]||{})[id]=nv}persist();notify(c,path)}
+  function Doc(path){const[c,id]=split(path);return{id,path,
+    get:()=>Promise.resolve(sd(id,(data[c]||{})[id])),
+    set:d=>{write(path,()=>clone(d));return Promise.resolve()},
+    update:d=>{if((data[c]||{})[id]===undefined)return Promise.reject({code:"invalid_argument",message:"missing"});write(path,cur=>merge(clone(cur),d));return Promise.resolve()},
+    delete:()=>{write(path,()=>null);return Promise.resolve()},
+    onSnapshot:next=>{const s={doc:true,path,next};subs.add(s);Promise.resolve().then(()=>{if(subs.has(s))next(sd(id,(data[c]||{})[id]))});return()=>subs.delete(s)},
+    collection:p=>Coll(path+"/"+p)}}
+  function Q(coll,q){return{
+    where:(f,op,v)=>Q(coll,{...q,f:[...q.f,[f,op,v]]}),
+    orderBy:(f,d)=>Q(coll,{...q,o:[f,d||"asc"]}),
+    limit:n=>Q(coll,{...q,l:n}),
+    get:()=>Promise.resolve(run(coll,q)),
+    onSnapshot:next=>{const s={doc:false,coll,q,next};subs.add(s);Promise.resolve().then(()=>{if(subs.has(s))next(run(coll,q))});return()=>subs.delete(s)}}}
+  function Coll(path){return Object.assign(Q(path,{f:[],o:null,l:0}),{path,doc:id=>Doc(path+"/"+(id||rid())),add:d=>{const r=Doc(path+"/"+rid());return r.set(d).then(()=>r)}})}
+  return{doc:Doc,collection:Coll};
+}
+
+/* ================= state ================= */
+const DEF={shop:"Sethika Mart",rate:4100,footer:"អរគុណសម្រាប់ការគាំទ្រ! សូមអញ្ជើញមកម្តងទៀត",neg:true,addr:"",phone:"",cats:[],print:{paper:"80",copies:1,auto:false,font:12}};
+let DBN=null,MODE="local",DLN=null,CANW=null;
+let CFG={...DEF,print:{...DEF.print}};
+let PRODUCTS=[],PMAP=new Map(),BMAP=new Map(),CHUNKS=[],STOCKOV={};
+let ACCTS=[],CUSTS=[],SHIFTS=[],DAYIDX=new Set(),TODAY={day:"",sales:[]},DAYC={};
+let SES=null,view="sale";
+let cart=[],disc=0,discType="amt",cust="",cat="*",gridN=60,sug=[],sugI=0,q="";
+let stPage=0,stQ="",hd="",rep={p:"today",from:"",to:"",who:""},repBusy=0;
+const P=()=>Object.assign({paper:"80",copies:1,auto:false,font:12},CFG.print||{});
+const isAdmin=()=>SES&&SES.role==="admin";
+const canNeg=()=>CFG.neg!==false;
+const ck=id=>id[0];
+
+/* ================= writes ================= */
+const JOBS={pending:0,failed:[]};
+const chain={};
+const wq=(path,fn)=>{const p=(chain[path]||Promise.resolve()).catch(()=>{}).then(fn);chain[path]=p;return p};
+async function tryW(fn){for(let i=0;i<3;i++){try{return await fn()}catch(e){const c=e&&e.code;if((c==="unavailable"||c==="resource_exhausted")&&i<2){await sleep(400*(i+1)+Math.random()*300);continue}throw e}}}
+function upsert(path,partial){return wq(path,()=>tryW(async()=>{const ref=DBN.doc(path);try{await ref.update(partial)}catch(e){if(e&&e.code==="invalid_argument"){await ref.set(partial);try{await ref.update(partial)}catch(e2){}}else throw e}}))}
+function setDoc(path,data){return wq(path,()=>tryW(()=>DBN.doc(path).set(data)))}
+function delDoc(path){return wq(path,()=>tryW(()=>DBN.doc(path).delete()))}
+function job(label,fn){JOBS.pending++;paintSync();return Promise.resolve().then(fn).then(()=>{JOBS.pending--;paintSync()},e=>{JOBS.pending--;JOBS.failed.push({label,fn});paintSync();console.error(label,e);toast("រក្សាទុកមិនបាន៖ "+label)})}
+function syncChip(){
+  if(JOBS.failed.length)return `<button class="chip r" onclick="POS.retry()">⚠ រក្សាទុកមិនបាន (${JOBS.failed.length}) ចុចព្យាយាមម្តងទៀត</button>`;
+  if(JOBS.pending)return `<span class="chip w">⏳ កំពុងរក្សាទុក</span>`;
+  return MODE==="shared"?`<span class="chip g" title="ទិន្នន័យចែករំលែករវាងឧបករណ៍ទាំងអស់">☁ ចែករំលែក</span>`:`<span class="chip w" title="ទិន្នន័យនៅក្នុងឧបករណ៍នេះតែប៉ុណ្ណោះ">💾 ឧបករណ៍នេះ</span>`}
+function paintSync(){const e=$("#sync");if(e)e.innerHTML=syncChip()}
+
+/* ================= products ================= */
+function mk(id,p){const o={id,barcode:String(p.barcode||""),name:String(p.name),cat:p.cat||"",price:+p.price||0,cost:+p.cost||0,stock:+p.stock||0,min:p.min==null?5:+p.min};const ov=STOCKOV[id];if(ov&&Date.now()-ov.t<6000)o.stock=ov.v;o._n=o.name.toLowerCase();o._b=o.barcode.toLowerCase();return o}
+function rebuildProducts(docs){
+  const list=[];CHUNKS=[];
+  for(const d of docs){CHUNKS.push(d.id);const items=(d.data()||{}).items||{};for(const id in items){const p=items[id];if(!p||p.del||!p.name)continue;list.push(mk(id,p))}}
+  list.sort((a,b)=>a._n<b._n?-1:a._n>b._n?1:0);
+  PRODUCTS=list;PMAP=new Map();BMAP=new Map();
+  for(const p of list){PMAP.set(p.id,p);if(p.barcode&&!BMAP.has(p._b))BMAP.set(p._b,p)}
+}
+const clean=p=>({barcode:p.barcode,name:p.name,cat:p.cat,price:p.price,cost:p.cost,stock:p.stock,min:p.min});
+function saveProduct(p){return job("ទំនិញ "+p.name,()=>upsert("pchunks/"+ck(p.id),{items:{[p.id]:clean(p)}}))}
+function adjStock(id,delta){const p=PMAP.get(id);if(!p)return Promise.resolve();p.stock+=delta;STOCKOV[id]={v:p.stock,t:Date.now()};const v=p.stock;return upsert("pchunks/"+ck(id),{items:{[id]:{stock:v}}})}
+function search(qs,limit){
+  qs=qs.trim().toLowerCase();if(!qs)return[];
+  const out=[];
+  for(let i=0;i<PRODUCTS.length;i++){const p=PRODUCTS[i];let s=-1;
+    if(p._b===qs)s=0;else if(p._b.startsWith(qs))s=1;else if(p._n.startsWith(qs))s=2;else if(p._n.includes(qs))s=3;else if(p._b.includes(qs))s=4;
+    if(s>=0)out.push([s,p])}
+  out.sort((a,b)=>a[0]-b[0]);
+  return out.slice(0,limit).map(x=>x[1]);
+}
+const catColor=c=>COLORS[Math.max(0,CFG.cats.indexOf(c))%COLORS.length];
+const stk=n=>Math.round(n*1000)/1000;
+
+/* ================= sales storage ================= */
+function flat(docs,day){const a=[];for(const d of docs){const items=(d.data()||{}).items||{};for(const id in items){const s=items[id];if(s&&s.items)a.push({...s,id,day:s.day||day})}}a.sort((x,y)=>y.date-x.date);return a}
+async function getDay(day,force){
+  if(day===TODAY.day)return TODAY.sales;
+  const c=DAYC[day];if(c&&!force&&Date.now()-c.t<60000)return c.sales;
+  if(!DAYIDX.has(day)&&!force)return[];
+  const snap=await DBN.collection("sales/"+day+"/h").get();
+  const sales=flat(snap.docs,day);DAYC[day]={t:Date.now(),sales};return sales;
+}
+function putSale(s){
+  return upsert(`sales/${s.day}/h/${s.hh}`,{items:{[s.id]:s}}).then(()=>{if(!DAYIDX.has(s.day)){DAYIDX.add(s.day);return setDoc("dayidx/"+s.day,{day:s.day})}});
+}
+function findSale(id){let s=TODAY.sales.find(x=>x.id===id);if(s)return s;for(const k in DAYC){s=DAYC[k].sales.find(x=>x.id===id);if(s)return s}return null}
+async function salesInRange(f,t){
+  const days=[...DAYIDX].filter(d=>d>=f&&d<=t);const td=TODAY.day;if(td>=f&&td<=t&&!days.includes(td))days.push(td);
+  const arr=await Promise.all(days.map(d=>getDay(d)));
+  return arr.flat();
+}
+async function shiftSales(sh){
+  const days=[];const a=new Date(sh.open);a.setHours(0,0,0,0);const end=new Date(sh.close||Date.now());
+  for(const d=new Date(a);d<=end;d.setDate(d.getDate()+1))days.push(dkey(d));
+  const arr=await Promise.all(days.map(d=>getDay(d)));
+  return arr.flat().filter(s=>s.shift===sh.id);
+}
+function stats(list){
+  const r={n:0,total:0,disc:0,cost:0,cash:0,qr:0,card:0,items:{}};
+  list.forEach(s=>{if(s.void)return;r.n++;r.total+=s.total;r.disc+=s.disc||0;r[s.method]=(r[s.method]||0)+s.total;
+    s.items.forEach(i=>{r.cost+=i.cost*i.qty;const t=r.items[i.name]||(r.items[i.name]={q:0,r:0});t.q+=i.qty;t.r+=i.price*i.qty})});
+  r.profit=r.total-r.cost;return r}
+
+/* ================= subscriptions ================= */
+const READY=new Set(),NEED=["settings","accts","prods","custs","shifts","dayidx","today"];
+let booted=false,unToday=null,rt=0;
+function mark(t){READY.add(t);if(!booted&&NEED.every(x=>READY.has(x)))afterLoad()}
+function sub(tag,ref,fn){return ref.onSnapshot(s=>{try{fn(s)}catch(e){console.error(tag,e)}mark(tag);refreshSoon()},e=>{console.error(tag,e);mark(tag)})}
+function startSubs(){
+  sub("settings",DBN.doc("settings/main"),s=>{const d=s.exists?s.data():{};CFG={...DEF,...d,print:{...DEF.print,...(d.print||{})},cats:Array.isArray(d.cats)?d.cats.slice():[]}});
+  sub("accts",DBN.collection("accounts"),s=>{ACCTS=s.docs.map(d=>({id:d.id,...d.data()}))});
+  sub("prods",DBN.collection("pchunks"),s=>rebuildProducts(s.docs));
+  sub("custs",DBN.collection("customers"),s=>{CUSTS=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.name<b.name?-1:1)});
+  sub("shifts",DBN.collection("shifts").orderBy("open","desc").limit(150),s=>{SHIFTS=s.docs.map(d=>({id:d.id,...d.data()}))});
+  sub("dayidx",DBN.collection("dayidx"),s=>{DAYIDX=new Set(s.docs.map(d=>d.id))});
+  subToday();
+}
+function subToday(){
+  const day=dkey(new Date());if(TODAY.day===day&&unToday)return;
+  if(unToday){unToday();unToday=null}
+  TODAY={day,sales:[]};
+  unToday=sub("today",DBN.collection(`sales/${day}/h`),s=>{TODAY={day,sales:flat(s.docs,day)}});
+}
+function isTyping(){const a=document.activeElement;return a&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)}
+function refreshSoon(){clearTimeout(rt);rt=setTimeout(()=>{
+  if(!SES)return;paintTop();
+  if(view==="sale"){paintGrid();paintCart()}
+  else if(!$("#ov")&&!isTyping())draw();
+},150)}
+
+/* ================= helpers: ui ================= */
+function toast(m){document.querySelectorAll(".toast").forEach(x=>x.remove());const t=document.createElement("div");t.className="toast";t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),2400)}
+function modal(title,body,foot){$("#layer").innerHTML=`<div class="ov" id="ov"><div class="modal" role="dialog" aria-label="${esc(title)}"><h2>${esc(title)}</h2><div class="mb">${body}</div><div class="mf">${foot||""}</div></div></div>`;
+  $("#ov").addEventListener("mousedown",e=>{if(e.target.id==="ov")closeM()})}
+function closeM(){$("#layer").innerHTML="";if(view==="sale"){const s=$("#scan");if(s&&matchMedia("(pointer:fine)").matches)s.focus()}}
+let pend=null,pendT=0;
+function confirmed(k){if(pend===k&&Date.now()-pendT<4000){pend=null;return true}pend=k;pendT=Date.now();toast("ចុចម្តងទៀតដើម្បីបញ្ជាក់");return false}
+function embedded(){try{return window.top!==window.self}catch(e){return true}}
+let AC;function beep(ok){try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain();o.frequency.value=ok?1100:300;g.gain.value=.08;o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+(ok?.07:.25))}catch(e){}}
+
+/* ================= auth ================= */
+let fails=0,lockUntil=0;
+function loginScreen(){
+  const none=!ACCTS.length;
+  const last=(()=>{try{return localStorage.getItem("sethika_last")||""}catch(e){return ""}})();
+  $("#app").innerHTML=`<div class="login"><form class="lcard" id="lf" autocomplete="off">
+    <h1>${esc(CFG.shop)}</h1>
+    <div class="sub">${none?"ដំឡើងដំបូង៖ បង្កើតគណនីម្ចាស់ហាង":"ចូលប្រើប្រាស់"}</div>
+    <label>ឈ្មោះគណនី<input id="ln" value="${esc(none?"":last)}" ${none?'placeholder="ឧ. ម្ចាស់ហាង"':'list="accl"'} autocomplete="username"></label>
+    ${none?"":`<datalist id="accl">${ACCTS.map(a=>`<option value="${esc(a.name)}">`).join("")}</datalist>`}
+    <label>លេខកូដ (PIN)<input id="lp" type="password" inputmode="numeric" autocomplete="current-password" placeholder="••••"></label>
+    ${none?`<label>បញ្ជាក់លេខកូដម្តងទៀត<input id="lp2" type="password" inputmode="numeric" placeholder="••••"></label>`:""}
+    <button class="btn ok" type="submit" style="padding:14px;font-size:1.05rem">${none?"បង្កើតគណនី និងចូល":"ចូល"}</button>
+    <div class="note ${MODE==="shared"?"":"w"}">${MODE==="shared"?"☁ ទិន្នន័យចែករំលែករវាងទូរសព្ទ និងកុំព្យូទ័រ។ ចូលដោយឈ្មោះ និងលេខកូដដូចគ្នានៅគ្រប់ឧបករណ៍។":"💾 ទិន្នន័យនៅក្នុងឧបករណ៍នេះតែប៉ុណ្ណោះ (មិនចែករំលែកជាមួយឧបករណ៍ផ្សេង)។"}</div>
+    ${CANW===false?`<div class="note w">គណនី Claude របស់អ្នកមិនអាចកែទិន្នន័យចែករំលែកបានទេ។ សូមឱ្យម្ចាស់ផ្តល់សិទ្ធិ Contributor ឬខ្ពស់ជាង។</div>`:""}
+  </form></div>`;
+  $("#lf").addEventListener("submit",e=>{e.preventDefault();none?doSetup():doLogin()});
+  setTimeout(()=>{const f=$(last&&!none?"#lp":"#ln");if(f)f.focus()},50);
+}
+async function doLogin(){
+  if(Date.now()<lockUntil){toast("សូមរង់ចាំបន្តិច មុនសាកល្បងម្តងទៀត");return}
+  const n=$("#ln").value.trim().toLowerCase(),pin=$("#lp").value;
+  const a=ACCTS.find(x=>(x.nameL||x.name.toLowerCase())===n);
+  const ok=a&&(await pinHash(a.id,pin))===a.pin;
+  if(!ok){fails++;if(fails>=5){lockUntil=Date.now()+15000;fails=0;toast("ខុសច្រើនពេក សូមរង់ចាំ ១៥ វិនាទី")}else toast("ឈ្មោះ ឬលេខកូដមិនត្រឹមត្រូវ");beep(false);return}
+  fails=0;try{localStorage.setItem("sethika_last",a.name)}catch(e){}
+  enter(a);
+}
+async function doSetup(){
+  const n=$("#ln").value.trim(),p1=$("#lp").value,p2=$("#lp2").value;
+  if(!n){toast("សូមបញ្ចូលឈ្មោះគណនី");return}
+  if(!/^\d{4,8}$/.test(p1)){toast("លេខកូដត្រូវមាន ៤ ដល់ ៨ ខ្ទង់");return}
+  if(p1!==p2){toast("លេខកូដទាំងពីរមិនដូចគ្នា");return}
+  const id=rid(),acc={name:n,nameL:n.toLowerCase(),role:"admin",pin:await pinHash(id,p1),created:Date.now()};
+  ACCTS.push({id,...acc});
+  try{await DBN.doc("accounts/"+id).set(acc)}catch(e){ACCTS.pop();toast("បង្កើតមិនបាន៖ គ្មានសិទ្ធិកែទិន្នន័យ ឬគ្មានអ៊ីនធឺណិត");return}
+  try{localStorage.setItem("sethika_last",n)}catch(e){}
+  enter({id,...acc});
+}
+function enter(a){
+  SES={id:a.id,name:a.name,role:a.role};view="sale";cart=[];disc=0;cust="";
+  shell();
+  setTimeout(()=>{if(!curShift()&&!$("#ov"))POS.openShift()},300);
+}
+
+/* ================= shell ================= */
+function curShift(){return SES&&SHIFTS.find(s=>!s.close&&s.cashierId===SES.id)}
+function shiftChip(){
+  const c=curShift();
+  if(!c)return `<button class="chip o" onclick="POS.openShift()">បើកវេនលក់</button>`;
+  const st=stats(TODAY.sales.filter(s=>s.shift===c.id));
+  return `<button class="chip o" onclick="POS.closeShift()">វេន #${c.no} · ${money(st.total)} · បិទវេន</button>`}
+function paintTop(){
+  const t=$("#top");if(!t)return;
+  t.innerHTML=`<div class="shop">${esc(CFG.shop)}</div><span class="chip" id="clock">${dstr(new Date())}</span><span id="sync">${syncChip()}</span>
+    <button class="chip" onclick="POS.held()">រង់ចាំ (${heldList().length})</button>${shiftChip()}
+    <button class="chip" onclick="POS.logout()">👤 ${esc(SES.name)}${isAdmin()?"":" (អ្នកលក់)"} · ចាកចេញ</button>`;
+}
+function shell(){
+  const tabs=isAdmin()?[["sale","ការលក់"],["stock","ស្តុក"],["history","ប្រវត្តិលក់"],["report","របាយការណ៍"],["set","ការកំណត់"]]:[["sale","ការលក់"],["history","ប្រវត្តិលក់"]];
+  $("#app").innerHTML=`<header class="top" id="top"></header>
+    <nav class="nav">${tabs.map(t=>`<button class="${view===t[0]?"on":""}" onclick="POS.go('${t[0]}')">${t[1]}</button>`).join("")}</nav><main id="main"></main>`;
+  paintTop();draw();
+}
+function draw(){
+  if(!isAdmin()&&view!=="sale"&&view!=="history")view="sale";
+  ({sale:vSale,stock:vStock,history:vHist,report:vReport,set:vSet})[view]();
+}
+setInterval(()=>{const c=$("#clock");if(c)c.textContent=dstr(new Date());if(DBN&&dkey(new Date())!==TODAY.day){subToday()}},20000);
+
+/* ================= sale ================= */
+const heldList=()=>{try{return JSON.parse(localStorage.getItem("sethika_held")||"[]")}catch(e){return[]}};
+const setHeld=l=>{try{localStorage.setItem("sethika_held",JSON.stringify(l))}catch(e){}};
+const cartSub=()=>cart.reduce((a,i)=>a+i.price*i.qty,0);
+const discAmt=()=>Math.min(cartSub(),discType==="pct"?Math.round(cartSub()*disc/100):disc);
+const cartTotal=()=>cartSub()-discAmt();
+function vSale(){
+  $("#main").innerHTML=`<div class="sale">
+  <section class="pane cartpane">
+    <div class="head" id="chead">
+      <div class="row"><select id="cust" onchange="POS.setCust(this.value)"><option value="">អតិថិជនទូទៅ</option>${CUSTS.map(c=>`<option value="${c.id}" ${c.id===cust?"selected":""}>${esc(c.name)}${c.phone?" · "+esc(c.phone):""}</option>`).join("")}</select>
+        <button class="ib" title="បន្ថែមអតិថិជន" onclick="POS.newCust()">+</button></div>
+      <div class="scanwrap"><input id="scan" placeholder="វាយឈ្មោះ ឬ បារកូដ (ខ្លះៗក៏បាន) / Scan" autocomplete="off" value="${esc(q)}"><div class="sug" id="sug" hidden></div></div>
+    </div>
+    <div id="cartbody"></div>
+  </section>
+  <section class="pane catalog">
+    <div class="cats"><button class="cat ${cat==="*"?"on":""}" onclick="POS.setCat('*')">ទាំងអស់</button>
+      ${CFG.cats.map((c,i)=>`<button class="cat ${cat===c?"on":""}" onclick="POS.setCat(${i})">${esc(c)}</button>`).join("")}</div>
+    <div class="grid" id="grid"></div>
+  </section></div>`;
+  paintCart();paintGrid();
+  if(!curShift()){$("#chead").insertAdjacentHTML("afterbegin",`<button class="btn warn" onclick="POS.openShift()">⚠ មិនទាន់បើកវេន ចុចដើម្បីបើកវេនលក់</button>`)}
+  const s=$("#scan");let scanT=0;
+  s.addEventListener("input",()=>{
+    q=s.value;sug=search(q,12);sugI=0;paintSug();clearTimeout(scanT);
+    const v=q.trim().toLowerCase(),p=v&&BMAP.get(v);
+    if(p&&sug.filter(x=>x._b.startsWith(v)).length===1)scanT=setTimeout(()=>{if(s.value.trim().toLowerCase()===v)POS.pick(p.id)},150);
+  });
+  s.addEventListener("keydown",e=>{
+    if(e.key==="ArrowDown"){e.preventDefault();sugI=Math.min(sugI+1,sug.length-1);paintSug()}
+    else if(e.key==="ArrowUp"){e.preventDefault();sugI=Math.max(sugI-1,0);paintSug()}
+    else if(e.key==="Enter"){e.preventDefault();clearTimeout(scanT);if(sug.length)POS.pick(sug[sugI].id);else if(q.trim())notFound(q.trim())}
+    else if(e.key==="Escape"){q="";s.value="";sug=[];paintSug()}
+  });
+  s.addEventListener("blur",()=>setTimeout(()=>{sug=[];paintSug()},180));
+  if(matchMedia("(pointer:fine)").matches||window.innerWidth>860)s.focus();
+}
+function paintSug(){
+  const el=$("#sug");if(!el)return;
+  if(!sug.length){el.hidden=true;el.innerHTML="";return}
+  el.hidden=false;
+  el.innerHTML=sug.map((p,i)=>`<button type="button" class="si ${i===sugI?"on":""}" onmousedown="event.preventDefault();POS.pick('${p.id}')"><span class="sn">${esc(p.name)}</span><span class="sb">${esc(p.barcode)}</span><span class="sp num">${money(p.price)}</span><span class="ss ${p.stock<=0?"o":p.stock<=p.min?"l":""}">${stk(p.stock)}</span></button>`).join("");
+  const on=el.querySelector(".si.on");if(on)on.scrollIntoView({block:"nearest"});
+}
+function notFound(v){
+  beep(false);q="";const s=$("#scan");if(s)s.value="";sug=[];paintSug();
+  if(/^\d{4,}$/.test(v)&&isAdmin())modal("រកមិនឃើញបារកូដ "+v,`<div>ទំនិញនេះមិនទាន់មានក្នុងប្រព័ន្ធទេ។ ចង់បន្ថែមវាឥឡូវនេះទេ?</div>`,`<button class="btn gh" onclick="POS.close()">បិទ</button><button class="btn ok" onclick="POS.editP(null,'${v}')">បន្ថែមទំនិញថ្មី</button>`);
+  else toast("រកមិនឃើញទំនិញ៖ "+v);
+}
+function paintGrid(){
+  const g=$("#grid");if(!g)return;
+  let n=0,total=0;const html=[];
+  for(let i=0;i<PRODUCTS.length;i++){const p=PRODUCTS[i];if(cat!=="*"&&p.cat!==cat)continue;total++;
+    if(n<gridN){n++;html.push(`<button class="tile ${p.stock<=0?"out":p.stock<=p.min?"low":""}" onclick="POS.add('${p.id}')"><span class="st">${stk(p.stock)}</span><span class="ic" style="background:${catColor(p.cat)}">${esc([...p.name][0]||"?")}</span><span class="nm">${esc(p.name)}</span><span class="pr num">${money(p.price)}</span></button>`)}}
+  if(!total)g.innerHTML=`<div class="empty more">${PRODUCTS.length?"គ្មានទំនិញក្នុងប្រភេទនេះ":"មិនទាន់មានទំនិញ"+(isAdmin()?" សូមទៅ «ស្តុក» ដើម្បីនាំចូល ឬបន្ថែមទំនិញ":"")}</div>`;
+  else g.innerHTML=html.join("")+(total>n?`<button class="btn gh more" onclick="POS.more()">បង្ហាញបន្ថែម (${n} / ${total})</button>`:"");
+}
+function paintCart(){
+  const b=$("#cartbody");if(!b)return;
+  b.innerHTML=`<div class="cartlist">${cart.length?`<table><thead><tr><th>ទំនិញ</th><th class="r">តម្លៃ</th><th class="c">ចំនួន</th><th class="r">សរុប</th><th></th></tr></thead><tbody>
+    ${cart.map((i,k)=>`<tr><td>${esc(i.name)}<div style="color:var(--muted);font-size:.78rem">${esc(i.barcode)}</div></td>
+      <td class="r num">${fmt(i.price)}</td>
+      <td class="c"><span class="qty"><button onclick="POS.qty(${k},-1)" aria-label="បន្ថយ">−</button><input value="${i.qty}" inputmode="decimal" onchange="POS.setQty(${k},this.value)" aria-label="ចំនួន"><button onclick="POS.qty(${k},1)" aria-label="បន្ថែម">+</button></span></td>
+      <td class="r num">${fmt(i.price*i.qty)}</td><td><button class="x" onclick="POS.del(${k})" aria-label="លុប">✕</button></td></tr>`).join("")}
+    </tbody></table>`:`<div class="empty">មិនទាន់មានទំនិញ<br>វាយឈ្មោះ ឬ Scan បារកូដ ឬចុចលើទំនិញខាងស្តាំ</div>`}</div>
+  <div class="totals">
+    <div class="l"><span>ទំនិញ</span><b class="num">${cart.length} (${stk(cart.reduce((a,i)=>a+i.qty,0))})</b></div>
+    <div class="l"><span>សរុបរង</span><b class="num">${money(cartSub())}</b></div>
+    <div class="l"><span>បញ្ចុះតម្លៃ <button class="chip" style="background:var(--panel2);color:var(--fg);padding:1px 8px" onclick="POS.discount()">កែ</button></span><b class="num">−${money(discAmt())}</b></div>
+    <div class="grand"><span>សរុប</span><span style="text-align:right">${money(cartTotal())}<small>≈ $${(cartTotal()/CFG.rate).toFixed(2)}</small></span></div>
+  </div>
+  <div class="acts">
+    <button class="btn warn" onclick="POS.hold()" ${cart.length?"":"disabled"}>រង់ចាំ</button>
+    <button class="btn bad" onclick="POS.clear()" ${cart.length?"":"disabled"}>បោះបង់</button>
+    <button class="btn ok big" onclick="POS.pay()" ${cart.length?"":"disabled"}>គិតលុយ</button>
+    <button class="btn gh" onclick="POS.go('history')" style="grid-column:span 2">វិក្កយបត្រចុងក្រោយ</button>
+  </div>`;
+  const cl=b.querySelector(".cartlist");if(cl)cl.scrollTop=cl.scrollHeight;
+}
+function addToCart(id,fromSearch){
+  const p=PMAP.get(id);if(!p)return;
+  const it=cart.find(i=>i.id===id),have=it?it.qty:0;
+  if(!canNeg()&&have+1>p.stock){beep(false);toast("ស្តុកមិនគ្រប់៖ នៅសល់ "+stk(p.stock));return}
+  if(it)it.qty++;else cart.push({id:p.id,barcode:p.barcode,name:p.name,price:p.price,cost:p.cost,qty:1});
+  beep(true);
+  if(fromSearch){q="";sug=[];const s=$("#scan");if(s){s.value="";s.focus()}paintSug();toast("+ "+p.name+"  "+money(p.price))}
+  paintCart();
+}
+
+/* ================= payment ================= */
+function receiptHTML(s){
+  const p=CFG;
+  return `<div class="doc"><h1>${esc(CFG.shop)}</h1>${p.addr?`<div class="c sm">${esc(p.addr)}</div>`:""}${p.phone?`<div class="c sm">ទូរស័ព្ទ ${esc(p.phone)}</div>`:""}
+  <hr><div class="c"><b>វិក្កយបត្រលក់</b>${s.void?" (លុបចោល)":""}</div>
+  <div class="pl sm"><span>លេខ</span><span>${esc(s.no)}</span></div>
+  <div class="pl sm"><span>កាលបរិច្ឆេទ</span><span>${dstr(s.date)}</span></div>
+  <div class="pl sm"><span>អ្នកលក់</span><span>${esc(s.cashier||"")}</span></div>
+  <div class="pl sm"><span>អតិថិជន</span><span>${esc(s.customer)}</span></div><hr>
+  <table>${s.items.map(i=>`<tr><td colspan="2">${esc(i.name)}</td></tr><tr><td class="sm">${stk(i.qty)} × ${fmt(i.price)}</td><td class="r">${fmt(i.price*i.qty)}</td></tr>`).join("")}</table><hr>
+  <div class="pl"><span>សរុបរង</span><span>${fmt(s.sub)}</span></div>
+  ${s.disc?`<div class="pl"><span>បញ្ចុះតម្លៃ</span><span>-${fmt(s.disc)}</span></div>`:""}
+  <div class="pl" style="font-size:1.15em"><b>សរុប</b><b>${fmt(s.total)}៛</b></div>
+  <div class="pl sm"><span>≈ ដុល្លារ</span><span>$${(s.total/CFG.rate).toFixed(2)}</span></div>
+  <div class="pl"><span>បង់តាម ${MN[s.method]||""}</span><span>${fmt(s.paid)}</span></div>
+  <div class="pl"><span>អាប់លុយ</span><span>${fmt(s.change)}</span></div><hr>
+  <div class="c">${esc(CFG.footer)}</div></div>`}
+let pm="cash";
+function pay(){
+  if(!cart.length)return;
+  if(!curShift()){POS.openShift(true);return}
+  const t=cartTotal();pm="cash";
+  modal("គិតលុយ",`<div style="text-align:center;color:var(--muted)">ទឹកប្រាក់ត្រូវបង់</div><div class="big-n num">${money(t)}</div><div style="text-align:center;color:var(--muted)">≈ $${(t/CFG.rate).toFixed(2)}</div>
+   <div class="pm"><button class="on" id="pm-cash" onclick="POS.pm('cash')">សាច់ប្រាក់</button><button id="pm-qr" onclick="POS.pm('qr')">QR / ABA</button><button id="pm-card" onclick="POS.pm('card')">កាត</button></div>
+   <label>ប្រាក់ទទួល (៛)<input id="rec" inputmode="numeric" value="${t}"></label>
+   <div class="quick">${[t,5000,10000,20000,50000,100000].map((v,i)=>`<button onclick="POS.setRec(${v})">${i?fmt(v):"គ្រប់ចំនួន"}</button>`).join("")}</div>
+   <div class="row" style="justify-content:space-between;font-size:1.2rem"><span>អាប់លុយ</span><b id="chg" class="num" style="color:var(--ok)">0៛</b></div>`,
+   `<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" id="okp" onclick="POS.finish()">បញ្ជាក់ការបង់ប្រាក់</button>`);
+  const r=$("#rec");r.addEventListener("input",calc);r.addEventListener("keydown",e=>{if(e.key==="Enter")POS.finish()});r.focus();r.select();calc();
+}
+function calc(){const t=cartTotal(),r=parseFloat($("#rec").value)||0,c=r-t;const e=$("#chg");e.textContent=c>=0?money(c):"ខ្វះ "+money(-c);e.style.color=c>=0?"var(--ok)":"var(--bad)";$("#okp").disabled=c<0}
+function finish(){
+  const t=cartTotal(),r=parseFloat($("#rec").value)||0;if(r<t)return;
+  const sh=curShift();if(!sh){closeM();POS.openShift(true);return}
+  if(!canNeg())for(const i of cart){const p=PMAP.get(i.id);if(!p||p.stock<i.qty){toast("ស្តុកមិនគ្រប់សម្រាប់ "+i.name);return}}
+  const now=new Date(),c=CUSTS.find(x=>x.id===cust);
+  const sale={id:rid(),no:"INV-"+dkey(now).replace(/-/g,"")+"-"+pad(now.getHours())+pad(now.getMinutes())+pad(now.getSeconds())+Math.floor(Math.random()*10),
+    date:now.getTime(),day:dkey(now),hh:pad(now.getHours()),shift:sh.id,cashier:SES.name,cashierId:SES.id,
+    items:cart.map(i=>({id:i.id,barcode:i.barcode,name:i.name,price:i.price,cost:i.cost,qty:i.qty})),
+    sub:cartSub(),disc:discAmt(),total:t,paid:r,change:r-t,method:pm,customer:c?c.name:"អតិថិជនទូទៅ"};
+  TODAY.sales.unshift(sale);
+  job("វិក្កយបត្រ "+sale.no,()=>putSale(sale));
+  sale.items.forEach(i=>job("ស្តុក "+i.name,()=>adjStock(i.id,-i.qty)));
+  cart=[];disc=0;cust="";
+  paintTop();vSale();POS.receipt(sale.id,true);
+  if(P().auto&&!embedded())POS.printSale(sale.id);
+}
+
+/* ================= printing ================= */
+const DOCCSS=".doc{background:#fff;color:#111;line-height:1.45}.doc h1{font-size:1.25em;margin:0;text-align:center}.doc .c{text-align:center}.doc .pl{display:flex;justify-content:space-between;gap:8px}.doc .pl span{min-width:0;overflow-wrap:anywhere}.doc hr{border:0;border-top:1px dashed #555;margin:6px 0}.doc table{width:100%;border-collapse:collapse}.doc td,.doc th{padding:2px 0;text-align:left;vertical-align:top;background:none;color:#111;border:0;position:static}.doc .r{text-align:right}.doc b{font-weight:700}.doc .sm{font-size:.85em;color:#333}";
+document.head.insertAdjacentHTML("beforeend","<style>"+DOCCSS+".mb .doc{padding:12px;border:1px dashed #999;border-radius:6px}</style>");
+function printDoc(body,auto){
+  const p=P(),w=p.paper,roll=w==="58"||w==="80",wd=w==="58"?"54mm":"76mm";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Print</title><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;700&display=swap"><style>@page{size:${roll?w+"mm auto":w};margin:${roll?"2mm":"12mm"}}html,body{margin:0;background:#fff}body{font-family:"Kantumruy Pro","Noto Sans Khmer","Khmer OS",sans-serif;font-size:${p.font}px;width:${roll?wd:"auto"}}${DOCCSS}</style></head><body>${body}${auto?"<scr"+"ipt>addEventListener('load',function(){setTimeout(function(){print()},500)})</scr"+"ipt>":""}</body></html>`;
+}
+function printHelp(){modal("ការបោះពុម្ពមិនដំណើរការនៅទីនេះ",`<div>ទំព័រនេះកំពុងបើកក្នុង Claude ដែលហាមឃាត់ការបោះពុម្ពដោយផ្ទាល់។ សូមប្រើប៊ូតុង «ទាញយកវិក្កយបត្រ» ហើយបើកឯកសារក្នុង Chrome ដើម្បីបោះពុម្ព។</div>`,`<button class="btn ok" onclick="POS.close()">យល់ព្រម</button>`)}
+function doPrint(body,copies){
+  if(!embedded()){
+    const old=document.getElementById("pf");if(old)old.remove();
+    const f=document.createElement("iframe");f.id="pf";f.setAttribute("aria-hidden","true");f.style.cssText="position:fixed;right:0;bottom:0;width:0;height:0;border:0";document.body.appendChild(f);
+    const d=f.contentWindow.document;d.open();d.write(printDoc(body,false));d.close();
+    const n=copies||Math.max(1,P().copies);
+    for(let i=0;i<n;i++)setTimeout(()=>{try{f.contentWindow.focus();f.contentWindow.print()}catch(e){toast("បោះពុម្ពមិនបាន")}},600+i*1500);
+    return;
+  }
+  let w=null;try{w=window.open("","_blank")}catch(e){}
+  if(w&&w.document){w.document.open();w.document.write(printDoc(body,true));w.document.close();return}
+  if(DLN){DLN.save({filename:"receipt.html",data:printDoc(body,true)}).catch(e=>{if(!e||e.code!=="declined")printHelp()});return}
+  printHelp();
+}
+
+/* ================= shifts ================= */
+function shiftHTML(sh,sales){
+  const st=stats(sales),exp=sh.openCash+st.cash;
+  const items=Object.entries(st.items).sort((a,b)=>b[1].q-a[1].q);
+  return `<div class="doc"><h1>${esc(CFG.shop)}</h1><div class="c"><b>របាយការណ៍វេន #${sh.no}</b></div><hr>
+  <div class="pl sm"><span>អ្នកលក់</span><span>${esc(sh.cashier)}</span></div>
+  <div class="pl sm"><span>បើក</span><span>${dstr(sh.open)}</span></div>
+  <div class="pl sm"><span>បិទ</span><span>${sh.close?dstr(sh.close):"កំពុងបើក"}</span></div><hr>
+  <div class="pl"><span>វិក្កយបត្រ</span><span>${st.n}</span></div>
+  <div class="pl"><span>សាច់ប្រាក់</span><span>${fmt(st.cash)}</span></div>
+  <div class="pl"><span>QR / ABA</span><span>${fmt(st.qr)}</span></div>
+  <div class="pl"><span>កាត</span><span>${fmt(st.card)}</span></div>
+  <div class="pl"><span>បញ្ចុះតម្លៃ</span><span>${fmt(st.disc)}</span></div>
+  <div class="pl" style="font-size:1.1em"><b>សរុបលក់</b><b>${fmt(st.total)}៛</b></div><hr>
+  <div class="pl"><span>ប្រាក់ដើម</span><span>${fmt(sh.openCash)}</span></div>
+  <div class="pl"><span>ត្រូវមានក្នុងថត</span><span>${fmt(exp)}</span></div>
+  ${sh.close?`<div class="pl"><span>រាប់បាន</span><span>${fmt(sh.closeCash)}</span></div><div class="pl"><b>ភាពខុសគ្នា</b><b>${sh.diff>0?"+":""}${fmt(sh.diff)}</b></div>`:""}
+  ${sh.note?`<div class="sm">ចំណាំ៖ ${esc(sh.note)}</div>`:""}<hr>
+  <div class="c sm"><b>ទំនិញលក់បាន</b></div>
+  <table>${items.map(([n,t])=>`<tr><td>${esc(n)}</td><td class="r">${stk(t.q)}</td><td class="r">${fmt(t.r)}</td></tr>`).join("")}</table></div>`}
+function reportHTML(label,sales,who){
+  const st=stats(sales),items=Object.entries(st.items).sort((a,b)=>b[1].q-a[1].q);
+  return `<div class="doc"><h1>${esc(CFG.shop)}</h1><div class="c"><b>របាយការណ៍លក់</b></div><div class="c sm">${esc(label)}${who?" · "+esc(who):""}</div><hr>
+  <div class="pl"><span>វិក្កយបត្រ</span><span>${st.n}</span></div>
+  <div class="pl"><span>សាច់ប្រាក់</span><span>${fmt(st.cash)}</span></div>
+  <div class="pl"><span>QR / ABA</span><span>${fmt(st.qr)}</span></div>
+  <div class="pl"><span>កាត</span><span>${fmt(st.card)}</span></div>
+  <div class="pl"><span>បញ្ចុះតម្លៃ</span><span>${fmt(st.disc)}</span></div>
+  <div class="pl" style="font-size:1.1em"><b>សរុបលក់</b><b>${fmt(st.total)}៛</b></div>
+  <div class="pl"><span>ប្រាក់ចំណេញ</span><span>${fmt(st.profit)}</span></div><hr>
+  <div class="c sm"><b>ទំនិញលក់បាន</b></div>
+  <table>${items.map(([n,x])=>`<tr><td>${esc(n)}</td><td class="r">${stk(x.q)}</td><td class="r">${fmt(x.r)}</td></tr>`).join("")}</table></div>`}
+
+/* ================= stock ================= */
+let INS=[];
+async function loadIns(){
+  const m=new Date(),keys=[dkey(m).slice(0,7)];const p=new Date(m.getFullYear(),m.getMonth()-1,1);keys.push(dkey(p).slice(0,7));
+  const out=[];
+  for(const k of keys){try{const s=await DBN.doc("stockins/"+k).get();if(s.exists){const it=s.data().items||{};for(const id in it)out.push({id,...it[id]})}}catch(e){}}
+  out.sort((a,b)=>b.date-a.date);INS=out.slice(0,40);
+}
+function filtered(){const t=stQ.trim().toLowerCase();return t?PRODUCTS.filter(p=>p._n.includes(t)||p._b.includes(t)||p.cat.toLowerCase().includes(t)):PRODUCTS}
+const PS=50;
+function vStock(){
+  const l=filtered(),pages=Math.max(1,Math.ceil(l.length/PS));if(stPage>=pages)stPage=pages-1;
+  const val=PRODUCTS.reduce((a,p)=>a+p.stock*p.cost,0),low=PRODUCTS.filter(p=>p.stock<=p.min).length;
+  const slice=l.slice(stPage*PS,stPage*PS+PS);
+  $("#main").innerHTML=`<div class="page">
+  <div class="kpis"><div class="pane kpi"><span>ចំនួនទំនិញ</span><b>${PRODUCTS.length.toLocaleString("en-US")}</b></div>
+    <div class="pane kpi"><span>តម្លៃស្តុក (ដើម)</span><b>${money(val)}</b></div>
+    <div class="pane kpi"><span>ជិតអស់ / អស់ស្តុក</span><b style="color:${low?"var(--warn)":"var(--ok)"}">${low}</b></div></div>
+  <div class="pane"><div class="bar" style="padding:12px"><input class="grow" id="sq" placeholder="ស្វែងរកទំនិញ បារកូដ ឬ ប្រភេទ" value="${esc(stQ)}">
+    <button class="btn" onclick="POS.editP()">+ ទំនិញថ្មី</button><button class="btn ok" onclick="POS.stockIn()">⬇ បញ្ចូលស្តុក</button><button class="btn gh" onclick="POS.cats()">ប្រភេទ</button><button class="btn warn" onclick="POS.importUI()">⬆ នាំចូលពីកម្មវិធីចាស់</button><button class="btn gh" onclick="POS.exportP()">ទាញយក CSV</button><button class="btn bad" onclick="POS.delAll()">🗑 លុបទំនិញទាំងអស់</button></div>
+  <div class="scroll"><table><thead><tr><th>បារកូដ</th><th>ឈ្មោះ</th><th>ប្រភេទ</th><th class="r">ដើម</th><th class="r">លក់</th><th class="r">ស្តុក</th><th></th></tr></thead><tbody>
+  ${slice.map(p=>`<tr><td>${esc(p.barcode)}</td><td>${esc(p.name)}</td><td><span class="tag">${esc(p.cat)}</span></td><td class="r num">${fmt(p.cost)}</td><td class="r num">${fmt(p.price)}</td>
+    <td class="r num"><span class="tag ${p.stock<=0?"out":p.stock<=p.min?"low":"ok"}">${stk(p.stock)}</span></td>
+    <td class="r" style="white-space:nowrap"><button class="btn ok" style="padding:4px 10px" onclick="POS.stockIn('${p.id}')">+ស្តុក</button> <button class="btn gh" style="padding:4px 10px" onclick="POS.editP('${p.id}')">កែ</button></td></tr>`).join("")||`<tr><td colspan="7" class="empty">${PRODUCTS.length?"រកមិនឃើញ":"មិនទាន់មានទំនិញ ចុច «នាំចូលពីកម្មវិធីចាស់» ឬ «+ ទំនិញថ្មី»"}</td></tr>`}
+  </tbody></table></div>
+  <div class="bar" style="padding:10px 12px;justify-content:space-between"><span style="color:var(--muted)">${l.length?stPage*PS+1:0}–${Math.min(l.length,stPage*PS+PS)} / ${l.length.toLocaleString("en-US")}</span>
+    <span class="row"><button class="btn gh" ${stPage?"":"disabled"} onclick="POS.pg(-1)">‹ មុន</button><span>${stPage+1} / ${pages}</span><button class="btn gh" ${stPage<pages-1?"":"disabled"} onclick="POS.pg(1)">បន្ទាប់ ›</button></span></div></div>
+  <div class="pane"><h3>ប្រវត្តិបញ្ចូលស្តុក (ថ្មីៗ)</h3><div class="scroll"><table><thead><tr><th>កាលបរិច្ឆេទ</th><th>ទំនិញ</th><th class="r">ចំនួន</th><th class="r">តម្លៃដើម</th><th>ដោយ</th><th>កំណត់ចំណាំ</th></tr></thead><tbody id="insb">
+  ${INS.map(x=>`<tr><td>${dstr(x.date)}</td><td>${esc(x.name)}</td><td class="r num">${x.qty>0?"+":""}${stk(x.qty)}</td><td class="r num">${fmt(x.cost)}</td><td>${esc(x.by||"")}</td><td>${esc(x.note||"")}</td></tr>`).join("")||`<tr><td colspan="6" class="empty">មិនទាន់មានការបញ្ចូលស្តុក</td></tr>`}</tbody></table></div></div></div>`;
+  const s=$("#sq");let t=0;s.addEventListener("input",()=>{clearTimeout(t);t=setTimeout(()=>{stQ=s.value;stPage=0;const pos=s.selectionStart;vStock();const n=$("#sq");n.focus();n.setSelectionRange(pos,pos)},250)});
+  if(!vStock.l){vStock.l=1;loadIns().then(()=>{vStock.l=0;if(view==="stock"&&!$("#ov")&&!isTyping()){const b=$("#insb");if(b)b.innerHTML=INS.map(x=>`<tr><td>${dstr(x.date)}</td><td>${esc(x.name)}</td><td class="r num">${x.qty>0?"+":""}${stk(x.qty)}</td><td class="r num">${fmt(x.cost)}</td><td>${esc(x.by||"")}</td><td>${esc(x.note||"")}</td></tr>`).join("")||`<tr><td colspan="6" class="empty">មិនទាន់មានការបញ្ចូលស្តុក</td></tr>`}})}
+}
+
+/* ================= history ================= */
+async function vHist(){
+  const t=dkey(new Date()),day=hd===""?t:hd;
+  $("#main").innerHTML=`<div class="page"><div class="empty">កំពុងផ្ទុក...</div></div>`;
+  let list=hd==="all"?(await salesInRange("0000-00-00","9999-99-99")):await getDay(day);
+  if(view!=="history")return;
+  if(!isAdmin())list=list.filter(s=>s.cashierId===SES.id);
+  list=list.slice().sort((a,b)=>b.date-a.date);
+  const st=stats(list),shown=list.slice(0,300);
+  $("#main").innerHTML=`<div class="page"><div class="bar">
+    <input type="date" id="hdv" value="${hd==="all"?"":day}" style="width:auto" onchange="POS.histD(this.value)">
+    <button class="btn ${hd!=="all"&&day===t?"":"gh"}" onclick="POS.histD('')">ថ្ងៃនេះ</button><button class="btn gh" onclick="POS.histD('y')">ម្សិលមិញ</button>${isAdmin()?`<button class="btn ${hd==="all"?"":"gh"}" onclick="POS.histD('all')">ទាំងអស់</button>`:""}
+    <span class="grow"></span><span>វិក្កយបត្រ <b>${st.n}</b> · សរុប <b class="num">${money(st.total)}</b></span></div>
+    <div class="pane"><div class="scroll"><table><thead><tr><th>លេខវិក្កយបត្រ</th><th>កាលបរិច្ឆេទ</th><th>អ្នកលក់</th><th>អតិថិជន</th><th>ទំនិញដែលលក់</th><th>បង់តាម</th><th class="r">សរុប</th><th></th></tr></thead><tbody>
+    ${shown.map(s=>`<tr style="${s.void?"opacity:.5;text-decoration:line-through":""}"><td>${esc(s.no)}</td><td>${dstr(s.date)}</td><td>${esc(s.cashier||"")}</td><td>${esc(s.customer)}</td><td><div class="ell">${esc(s.items.map(i=>i.name+" ×"+stk(i.qty)).join(", "))}</div></td><td>${MN[s.method]||""}</td><td class="r num">${money(s.total)}</td>
+    <td class="r" style="white-space:nowrap"><button class="btn gh" style="padding:4px 10px" onclick="POS.receipt('${s.id}')">មើល</button> <button class="btn" style="padding:4px 10px" onclick="POS.printSale('${s.id}')">🖨</button></td></tr>`).join("")||`<tr><td colspan="8" class="empty">គ្មានការលក់</td></tr>`}
+    </tbody></table></div>${list.length>300?`<div class="note">បង្ហាញ ៣០០ ដំបូង ពី ${list.length}</div>`:""}</div></div>`;
+}
+
+/* ================= report ================= */
+function repRange(){const n=new Date(),t=dkey(n);
+  if(rep.p==="today")return[t,t];
+  if(rep.p==="yday"){const y=dkey(new Date(n.getTime()-864e5));return[y,y]}
+  if(rep.p==="7")return[dkey(new Date(n.getTime()-6*864e5)),t];
+  if(rep.p==="30")return[dkey(new Date(n.getTime()-29*864e5)),t];
+  if(rep.p==="all")return["0000-00-00","9999-99-99"];
+  const f=rep.from||t;return[f,rep.to||f]}
+async function vReport(){
+  const r=repRange(),f=r[0],t=r[1],tok=++repBusy;
+  $("#main").innerHTML=`<div class="page"><div class="empty">កំពុងផ្ទុក...</div></div>`;
+  let all=await salesInRange(f,t);
+  if(tok!==repBusy||view!=="report")return;
+  const byWho={};all.forEach(s=>{if(s.void)return;const k=s.cashierId||"-";(byWho[k]=byWho[k]||{name:s.cashier||"-",n:0,t:0});byWho[k].n++;byWho[k].t+=s.total});
+  const ss=rep.who?all.filter(s=>s.cashierId===rep.who):all,st=stats(ss);
+  const items=Object.entries(st.items).sort((a,b)=>b[1].q-a[1].q);
+  const byDay={};ss.forEach(s=>{if(s.void)return;const k=s.day,d=byDay[k]||(byDay[k]={n:0,t:0,c:0});d.n++;d.t+=s.total;d.c+=s.items.reduce((a,i)=>a+i.cost*i.qty,0)});
+  const days=Object.keys(byDay).sort().reverse();
+  const shs=SHIFTS.filter(x=>{const k=dkey(x.open);return k>=f&&k<=t&&(!rep.who||x.cashierId===rep.who)});
+  const shStat=await Promise.all(shs.map(sh=>shiftSales(sh)));
+  if(tok!==repBusy||view!=="report")return;
+  const PB=[["today","ថ្ងៃនេះ"],["yday","ម្សិលមិញ"],["7","៧ ថ្ងៃ"],["30","៣០ ថ្ងៃ"],["all","ទាំងអស់"]];
+  const vf=rep.p==="custom"?rep.from:(f.startsWith("0000")?"":f),vt=rep.p==="custom"?rep.to:(t.startsWith("9999")?"":t);
+  $("#main").innerHTML=`<div class="page">
+  <div class="bar">${PB.map(x=>`<button class="btn ${rep.p===x[0]?"":"gh"}" onclick="POS.repP('${x[0]}')">${x[1]}</button>`).join("")}
+    <span class="row"><input type="date" id="rf" value="${vf}" style="width:auto"><span>ដល់</span><input type="date" id="rt" value="${vt}" style="width:auto"></span>
+    <button class="btn" onclick="POS.repC()">មើល</button>
+    <select id="rw" style="width:auto" onchange="POS.repW(this.value)"><option value="">អ្នកលក់ទាំងអស់</option>${ACCTS.map(a=>`<option value="${a.id}" ${rep.who===a.id?"selected":""}>${esc(a.name)}</option>`).join("")}</select>
+    <button class="btn ok" onclick="POS.repPrint()">🖨 បោះពុម្ព</button><button class="btn gh" onclick="POS.repCSV()">ទាញយក CSV</button></div>
+  <div class="kpis"><div class="pane kpi"><span>ចំណូលសរុប</span><b>${money(st.total)}</b></div><div class="pane kpi"><span>ប្រាក់ចំណេញ</span><b style="color:var(--ok)">${money(st.profit)}</b></div>
+    <div class="pane kpi"><span>ចំនួនវិក្កយបត្រ</span><b>${st.n}</b></div><div class="pane kpi"><span>ជាមធ្យម / វិក្កយបត្រ</span><b>${money(st.n?st.total/st.n:0)}</b></div><div class="pane kpi"><span>បញ្ចុះតម្លៃ</span><b>${money(st.disc)}</b></div></div>
+  <div class="pane"><h3>បែងចែកតាមការបង់ប្រាក់</h3><div class="mb">សាច់ប្រាក់ <b class="num">${money(st.cash)}</b> · QR / ABA <b class="num">${money(st.qr)}</b> · កាត <b class="num">${money(st.card)}</b></div></div>
+  <div class="pane"><h3>តាមអ្នកលក់</h3><div class="scroll"><table><thead><tr><th>អ្នកលក់</th><th class="r">វិក្កយបត្រ</th><th class="r">លក់សរុប</th></tr></thead><tbody>
+    ${Object.entries(byWho).map(([k,x])=>`<tr><td>${esc(x.name)}</td><td class="r num">${x.n}</td><td class="r num">${money(x.t)}</td></tr>`).join("")||`<tr><td colspan="3" class="empty">មិនទាន់មានការលក់</td></tr>`}</tbody></table></div></div>
+  <div class="pane"><h3>លក់តាមថ្ងៃ (ចុចជួរដើម្បីមើលថ្ងៃនោះ)</h3><div class="scroll"><table><thead><tr><th>ថ្ងៃ</th><th class="r">វិក្កយបត្រ</th><th class="r">សរុប</th><th class="r">ចំណេញ</th></tr></thead><tbody>
+    ${days.map(k=>`<tr style="cursor:pointer" onclick="POS.repDay('${k}')"><td>${dk2(k)}</td><td class="r num">${byDay[k].n}</td><td class="r num">${money(byDay[k].t)}</td><td class="r num">${money(byDay[k].t-byDay[k].c)}</td></tr>`).join("")||`<tr><td colspan="4" class="empty">មិនទាន់មានការលក់</td></tr>`}</tbody></table></div></div>
+  <div class="pane"><h3>ទំនិញដែលលក់បាន</h3><div class="scroll"><table><thead><tr><th>ទំនិញ</th><th class="r">ចំនួន</th><th class="r">ចំណូល</th></tr></thead><tbody>
+    ${items.slice(0,500).map(([n,x])=>`<tr><td>${esc(n)}</td><td class="r num">${stk(x.q)}</td><td class="r num">${money(x.r)}</td></tr>`).join("")||`<tr><td colspan="3" class="empty">មិនទាន់មានការលក់</td></tr>`}</tbody></table></div></div>
+  <div class="pane"><h3>វេនលក់</h3><div class="scroll"><table><thead><tr><th>វេន</th><th>ម៉ោង</th><th>អ្នកលក់</th><th class="r">លក់សរុប</th><th class="r">ត្រូវមាន</th><th class="r">រាប់បាន</th><th class="r">ខុស</th><th></th></tr></thead><tbody>
+    ${shs.map((sh,i)=>{const x=stats(shStat[i]);return `<tr><td>${dk2(dkey(sh.open))} #${sh.no}</td><td>${tm(sh.open)} - ${sh.close?tm(sh.close):"កំពុងបើក"}</td><td>${esc(sh.cashier)}</td><td class="r num">${money(x.total)}</td><td class="r num">${money(sh.openCash+x.cash)}</td><td class="r num">${sh.close?money(sh.closeCash):"-"}</td><td class="r num" style="color:${sh.close&&sh.diff!==0?"var(--bad)":"var(--ok)"}">${sh.close?(sh.diff>0?"+":"")+fmt(sh.diff):"-"}</td><td class="r"><button class="btn gh" style="padding:4px 10px" onclick="POS.shiftReport('${sh.id}')">មើល</button></td></tr>`}).join("")||`<tr><td colspan="8" class="empty">មិនទាន់មានវេន</td></tr>`}</tbody></table></div></div></div>`;
+  vReport.cur=ss;
+}
+
+/* ================= settings ================= */
+function vSet(){
+  const p=P();
+  $("#main").innerHTML=`<div class="page"><div class="pane"><h3>ការកំណត់ហាង</h3><div class="mb">
+  <label>ឈ្មោះហាង<input id="s1" value="${esc(CFG.shop)}"></label>
+  <div class="f2"><label>អាសយដ្ឋាន (បោះពុម្ពលើវិក្កយបត្រ)<input id="sa" value="${esc(CFG.addr)}"></label><label>លេខទូរស័ព្ទហាង<input id="sp" value="${esc(CFG.phone)}"></label></div>
+  <label>អត្រាប្តូរប្រាក់ (១ ដុល្លារ = ? រៀល)<input id="s2" inputmode="numeric" value="${CFG.rate}"></label>
+  <label>សារចុងវិក្កយបត្រ<input id="s3" value="${esc(CFG.footer)}"></label>
+  <label>លក់ពេលស្តុកអស់ ឬ មិនគ្រប់<select id="s4"><option value="1" ${CFG.neg!==false?"selected":""}>អនុញ្ញាត (ស្តុកអាចអវិជ្ជមាន)</option><option value="0" ${CFG.neg===false?"selected":""}>មិនអនុញ្ញាត</option></select></label></div></div>
+  <div class="pane"><h3>ការបោះពុម្ព</h3><div class="mb">
+  <div class="f2"><label>ទំហំក្រដាស<select id="p1">${[["58","វិក្កយបត្រ 58mm"],["80","វិក្កយបត្រ 80mm"],["A5","A5"],["A4","A4"]].map(x=>`<option value="${x[0]}" ${p.paper===x[0]?"selected":""}>${x[1]}</option>`).join("")}</select></label>
+  <label>ចំនួនច្បាប់ចម្លង (១-៥)<input id="p2" inputmode="numeric" value="${p.copies}"></label></div>
+  <div class="f2"><label>ទំហំអក្សរ (px)<input id="p3" inputmode="numeric" value="${p.font}"></label>
+  <label>បោះពុម្ពក្រោយគិតលុយ<select id="p4"><option value="0" ${p.auto?"":"selected"}>មិនបោះដោយស្វ័យប្រវត្តិ</option><option value="1" ${p.auto?"selected":""}>បោះពុម្ពភ្លាម</option></select></label></div>
+  <div class="bar"><button class="btn" onclick="POS.testPrint()">🖨 សាកល្បងបោះពុម្ព</button></div>
+  <div class="note">បើទំព័រនេះបើកក្នុង Claude ការបោះពុម្ពអាចត្រូវបានបិទ។ ដើម្បីចេញពីម៉ាស៊ីនព្រីនភ្លាមៗ សូមបើកក្នុង Chrome ជាមួយ <b>--kiosk-printing</b>។</div></div></div>
+  <div class="bar"><button class="btn ok" onclick="POS.saveSet()">រក្សាទុកការកំណត់ទាំងអស់</button></div>
+  <div class="pane"><h3>គណនីអ្នកប្រើប្រាស់</h3><div class="scroll"><table><thead><tr><th>ឈ្មោះ</th><th>តួនាទី</th><th></th></tr></thead><tbody>
+  ${ACCTS.map(a=>`<tr><td>${esc(a.name)}${a.id===SES.id?" (អ្នក)":""}</td><td>${a.role==="admin"?"ម្ចាស់/អ្នកគ្រប់គ្រង":"អ្នកលក់"}</td><td class="r" style="white-space:nowrap"><button class="btn gh" style="padding:4px 10px" onclick="POS.pinUI('${a.id}')">ប្តូរលេខកូដ</button> ${a.id===SES.id?"":`<button class="btn bad" style="padding:4px 10px" onclick="POS.delAcct('${a.id}')">លុប</button>`}</td></tr>`).join("")}
+  </tbody></table></div><div class="bar" style="padding:12px"><button class="btn ok" onclick="POS.acctUI()">+ បង្កើតគណនីថ្មី</button></div></div>
+  <div class="pane"><h3>ទិន្នន័យ</h3><div class="mb"><div class="note ${MODE==="shared"?"":"w"}">${MODE==="shared"?"☁ ទិន្នន័យត្រូវបានរក្សាទុកដោយស្វ័យប្រវត្តិ ហើយចែករំលែករវាងឧបករណ៍ទាំងអស់ដែលចូលដោយគណនីរបស់អ្នក។":"💾 ទិន្នន័យនៅក្នុងកម្មវិធីរុករកនេះតែប៉ុណ្ណោះ។"}</div>
+  <div class="bar"><button class="btn ok" onclick="POS.importUI()">⬆ នាំចូលពីកម្មវិធីចាស់</button><button class="btn bad" onclick="POS.delAll()">🗑 លុបទំនិញទាំងអស់</button></div></div></div></div>`;
+}
+
+/* ================= import ================= */
+const FIELDS={prod:[["barcode","បារកូដ"],["name","ឈ្មោះទំនិញ *"],["cat","ប្រភេទ"],["cost","តម្លៃដើម"],["price","តម្លៃលក់"],["stock","ស្តុក"],["min","ស្តុកអប្បបរមា"]],cust:[["name","ឈ្មោះ *"],["phone","លេខទូរស័ព្ទ"]]};
+const ALIAS={barcode:["barcode","bar code","sku","item code","product code","code","បារកូដ","លេខកូដ","កូដ"],cost:["cost","purchase","buy","តម្លៃដើម","ថ្លៃដើម","ដើម"],price:["price","retail","selling","តម្លៃលក់","ថ្លៃលក់","តម្លៃ","ថ្លៃ"],min:["min","alert","reorder","អប្បបរមា","ជូនដំណឹង"],stock:["stock","qty","quantity","on hand","balance","ស្តុក","ចំនួន","សល់"],cat:["category","group","cat","ប្រភេទ","ក្រុម"],phone:["phone","tel","mobile","contact","ទូរស័ព្ទ","លេខទូរ"],name:["name","product","item","description","ឈ្មោះ","ទំនិញ","ផលិតផល"]};
+const AUTO={prod:["barcode","cost","price","min","stock","cat","name"],cust:["phone","name"]};
+let imp={type:"prod",rows:[],map:{}};
+function autoMap(){const head=imp.rows[0].map(h=>String(h==null?"":h).toLowerCase().trim());const used=new Set(),m={};
+  FIELDS[imp.type].forEach(f=>m[f[0]]=-1);
+  AUTO[imp.type].forEach(f=>{const i=head.findIndex((h,k)=>!used.has(k)&&h&&ALIAS[f].some(a=>h.includes(a)));if(i>=0){m[f]=i;used.add(i)}});
+  imp.map=m}
+function parseText(t){t=t.replace(/^﻿/,"");const first=t.split(/\r?\n/)[0]||"";
+  const d=first.includes("\t")?"\t":((first.match(/;/g)||[]).length>(first.match(/,/g)||[]).length?";":",");
+  const rows=[];let row=[],cur="",q2=false;
+  for(let i=0;i<t.length;i++){const c=t[i];
+    if(q2){if(c==='"'){if(t[i+1]==='"'){cur+='"';i++}else q2=false}else cur+=c}
+    else if(c==='"')q2=true;
+    else if(c===d){row.push(cur);cur=""}
+    else if(c==="\n"||c==="\r"){if(c==="\r"&&t[i+1]==="\n")i++;row.push(cur);cur="";rows.push(row);row=[]}
+    else cur+=c}
+  if(cur!==""||row.length){row.push(cur);rows.push(row)}
+  return rows}
+function setRows(rows){
+  rows=rows.filter(r=>r.some(c=>String(c==null?"":c).trim()!==""));
+  if(rows.length<2){toast("ឯកសារគ្មានទិន្នន័យ (ត្រូវមានក្បាលតារាង និងយ៉ាងហោចណាស់ ១ ជួរ)");return}
+  imp.type=($("#itype")||{}).value||"prod";imp.rows=rows;autoMap();impMap()}
+function readFile(f){
+  const n=f.name.toLowerCase(),r=new FileReader();
+  if(/\.(html?|mhtml)$/.test(n)){
+    r.onload=()=>{try{const doc=new DOMParser().parseFromString(String(r.result),"text/html");let best=[];
+      doc.querySelectorAll("table").forEach(t=>{const rows=[...t.querySelectorAll("tr")].map(tr=>[...tr.children].filter(c=>/^(TD|TH)$/.test(c.tagName)).map(c=>c.textContent.replace(/\s+/g," ").trim())).filter(x=>x.length>1);if(rows.length>best.length)best=rows});
+      if(best.length<2){toast("រកមិនឃើញតារាងទំនិញក្នុងឯកសារ HTML នេះទេ");return}
+      setRows(best)}catch(e){toast("អានឯកសារមិនបាន")}};
+    r.readAsText(f,"UTF-8");return}
+  if(/\.(xlsx|xls)$/.test(n)){
+    if(!window.XLSX){toast("មិនអាចអាន Excel បានទេ សូមបិទភ្ជាប់តារាងដោយផ្ទាល់");return}
+    r.onload=()=>{try{const wb=XLSX.read(new Uint8Array(r.result),{type:"array"});let best=[];wb.SheetNames.forEach(s=>{const rows=XLSX.utils.sheet_to_json(wb.Sheets[s],{header:1,raw:false,defval:""});if(rows.length>best.length)best=rows});setRows(best)}catch(e){toast("អានឯកសារមិនបាន")}};
+    r.readAsArrayBuffer(f);return}
+  r.onload=()=>{const u=new Uint8Array(r.result);let t,bad=false;
+    if((u[0]===0x50&&u[1]===0x4B)||u.slice(0,2000).includes(0)&&!(u[0]===0xFF&&u[1]===0xFE)&&!(u[0]===0xFE&&u[1]===0xFF)){toast("នេះជាឯកសារ ZIP ឬឯកសារទ្វេគោល មិនមែនតារាងទេ សូមជ្រើស .html .xlsx .csv ឬបិទភ្ជាប់ដោយផ្ទាល់");return}
+    if(u[0]===0xFF&&u[1]===0xFE)t=new TextDecoder("utf-16le").decode(u);
+    else if(u[0]===0xFE&&u[1]===0xFF)t=new TextDecoder("utf-16be").decode(u);
+    else{try{t=new TextDecoder("utf-8",{fatal:true}).decode(u)}catch(e){t=new TextDecoder("utf-8").decode(u);bad=true}}
+    if(bad)toast("ឯកសារមិនមែន UTF-8 អក្សរខ្មែរអាចខូច សូមបិទភ្ជាប់ដោយផ្ទាល់ ឬរក្សាទុកជា .xlsx");
+    setRows(parseText(t))};
+  r.readAsArrayBuffer(f);
+}
+function curMap(){const m={};FIELDS[imp.type].forEach(x=>{const e=$("#m-"+x[0]);m[x[0]]=e?parseInt(e.value,10):-1});return m}
+function importUI(){
+  modal("នាំចូលទិន្នន័យពីកម្មវិធីចាស់",`<div style="color:var(--muted)">វិធីល្អបំផុត៖ នៅទំព័រទំនិញក្នុងកម្មវិធីចាស់ ជ្រើស «Show» ជាលេខធំបំផុត ចុចលើតារាង ចុច Ctrl+A និង Ctrl+C ហើយបិទភ្ជាប់ (Ctrl+V) ក្នុងប្រអប់ខាងក្រោម។ ឬជ្រើសឯកសារ .html .xlsx .csv។</div>
+    <label>ប្រភេទទិន្នន័យ<select id="itype"><option value="prod">ទំនិញ (បារកូដ ឈ្មោះ តម្លៃ ស្តុក)</option><option value="cust">អតិថិជន (ឈ្មោះ ទូរស័ព្ទ)</option></select></label>
+    <label>ជ្រើសឯកសារ (.html .xlsx .xls .csv)<input type="file" id="impf" accept=".xlsx,.xls,.csv,.tsv,.txt,.html,.htm"></label>
+    <label>ឬ បិទភ្ជាប់តារាង (ជួរទីមួយជាក្បាលតារាង)<textarea id="impt" rows="5" placeholder="Barcode&#9;Name&#9;Price&#9;Stock"></textarea></label>`,
+    `<button class="btn gh" onclick="POS.close()">បិទ</button><button class="btn ok" onclick="POS.impPaste()">អានទិន្នន័យដែលបិទភ្ជាប់</button>`);
+  $("#impf").addEventListener("change",e=>{const f=e.target.files[0];if(f)readFile(f)});
+}
+function impMap(){
+  const head=imp.rows[0],f=FIELDS[imp.type],isP=imp.type==="prod";
+  modal("ផ្គូផ្គងជួរ ("+(imp.rows.length-1).toLocaleString("en-US")+" ជួរទិន្នន័យ)",`<div style="color:var(--muted)">ពិនិត្យថាជួរនីមួយៗត្រូវនឹងព័ត៌មានត្រឹមត្រូវ។ កម្មវិធីបានទាយឱ្យរួចហើយ។</div>
+    <div class="f2">${f.map(x=>`<label>${x[1]}<select id="m-${x[0]}" onchange="POS.impPrev()"><option value="-1">— មិននាំចូល —</option>${head.map((h,i)=>`<option value="${i}" ${imp.map[x[0]]===i?"selected":""}>${esc(String(h==null?"":h).trim()||"ជួរ "+(i+1))}</option>`).join("")}</select></label>`).join("")}</div>
+    ${isP?`<div class="f2">
+      <label>តម្លៃក្នុងឯកសារជា<select id="icur"><option value="khr">រៀល (៛)</option><option value="usd">ដុល្លារ ($)</option></select></label>
+      <label>បើបារកូដមានរួចហើយ<select id="imode"><option value="update">ធ្វើបច្ចុប្បន្នភាពទំនិញនោះ</option><option value="skip">រំលង</option></select></label>
+      <label>ស្តុក<select id="istk"><option value="replace">ជំនួសស្តុកចាស់</option><option value="add">បូកបន្ថែមលើស្តុកចាស់</option></select></label>
+      ${PRODUCTS.length?`<label style="align-content:end"><span class="row" style="color:var(--fg)"><input type="checkbox" id="iclr" style="width:auto"> លុបទំនិញទាំងអស់មុននាំចូល</span></label>`:""}
+    </div>`:""}
+    <div style="font-size:.85rem;color:var(--muted)">ទិដ្ឋភាពមុន (៥ ជួរដំបូង)</div><div class="scroll" id="iprev"></div>`,
+    `<button class="btn gh" onclick="POS.importUI()">ត្រឡប់ក្រោយ</button><button class="btn ok" id="igo" onclick="POS.impGo()">នាំចូលឥឡូវនេះ</button>`);
+  $(".modal").style.width="min(920px,100%)";impPrev();
+}
+function impPrev(){
+  const m=curMap(),f=FIELDS[imp.type],body=imp.rows.slice(1),w=[],rc=String.fromCharCode(65533);
+  const bad=body.filter(r=>{const s=String(m.name>=0?r[m.name]||"":"");return s.includes("?")||s.includes(rc)}).length;
+  if(bad>body.length*.2)w.push("ឈ្មោះ "+bad+" ជួរមានសញ្ញា ? ឬប្រអប់ការ៉េ មានន័យថាអក្សរខ្មែរខូចក្នុងឯកសារ ត្រូវបិទភ្ជាប់ដោយផ្ទាល់ពីគេហទំព័រ");
+  if(imp.type==="prod"){if(m.price<0)w.push("មិនបានជ្រើសជួរតម្លៃលក់");else{const np=body.filter(r=>!num(r[m.price])).length;if(np)w.push("គ្មានតម្លៃលក់ "+np+" ជួរ (តម្លៃ 0)")}}
+  $("#iprev").innerHTML=`${w.length?`<div style="color:var(--bad);padding:6px 0">⚠ ${w.map(esc).join("<br>⚠ ")}</div>`:""}<table><thead><tr>${f.map(x=>`<th>${x[1]}</th>`).join("")}</tr></thead><tbody>${imp.rows.slice(1,6).map(r=>`<tr>${f.map(x=>`<td>${m[x[0]]>=0?esc(r[m[x[0]]]):"<span style='color:var(--muted)'>—</span>"}</td>`).join("")}</tr>`).join("")}</tbody></table>`}
+async function impGo(){
+  const m=curMap();if(m.name<0){toast("សូមជ្រើសជួរឈ្មោះ");return}
+  const body=imp.rows.slice(1),g=(r,k)=>m[k]>=0?String(r[m[k]]==null?"":r[m[k]]).trim():"";
+  let a=0,u=0,s=0,b=0;
+  const btn=$("#igo");btn.disabled=true;btn.textContent="កំពុងនាំចូល...";
+  try{
+    if(imp.type==="cust"){
+      for(let i=0;i<body.length;i++){const r=body[i],n=g(r,"name");if(!n){b++;continue}const ph=g(r,"phone");if(CUSTS.some(c=>c.name===n&&c.phone===ph)){s++;continue}const id=rid();CUSTS.push({id,name:n,phone:ph});await setDoc("customers/"+id,{name:n,phone:ph});a++}
+    }else{
+      const mult=$("#icur").value==="usd"?CFG.rate:1,mode=$("#imode").value,sm=$("#istk").value,clr=$("#iclr");
+      let newCats=new Set(CFG.cats);
+      if(clr&&clr.checked){for(const id of CHUNKS.slice())await delDoc("pchunks/"+id);PRODUCTS=[];PMAP=new Map();BMAP=new Map();CHUNKS=[];newCats=new Set()}
+      const byC={},touched=new Map();
+      body.forEach((r,i)=>{
+        const n=g(r,"name");if(!n){b++;return}
+        const bc=g(r,"barcode").replace(/\s+/g,""),has=k=>m[k]>=0&&g(r,k)!=="";
+        const ex=bc?(touched.get(bc.toLowerCase())||BMAP.get(bc.toLowerCase())):null;
+        const cat=g(r,"cat");if(cat)newCats.add(cat);
+        if(ex){
+          if(mode==="skip"){s++;return}
+          const o={...ex};o.name=n;if(cat)o.cat=cat;
+          if(has("price"))o.price=Math.round(num(g(r,"price"))*mult);
+          if(has("cost"))o.cost=Math.round(num(g(r,"cost"))*mult);
+          if(has("stock"))o.stock=sm==="add"?ex.stock+num(g(r,"stock")):num(g(r,"stock"));
+          if(has("min"))o.min=num(g(r,"min"));
+          (byC[ck(o.id)]=byC[ck(o.id)]||{})[o.id]=clean(o);touched.set(bc.toLowerCase(),o);u++;
+        }else{
+          const c=cat||"ផ្សេងៗ";newCats.add(c);
+          const o={id:rid(),barcode:bc||("P"+String(Date.now()).slice(-7)+i),name:n,cat:c,price:Math.round(num(g(r,"price"))*mult),cost:Math.round(num(g(r,"cost"))*mult),stock:has("stock")?num(g(r,"stock")):0,min:has("min")?num(g(r,"min")):5};
+          (byC[ck(o.id)]=byC[ck(o.id)]||{})[o.id]=clean(o);touched.set(o.barcode.toLowerCase(),o);a++;
+        }
+      });
+      const keys=Object.keys(byC);
+      for(let i=0;i<keys.length;i++){btn.textContent=`កំពុងរក្សាទុក ${i+1}/${keys.length}...`;await upsert("pchunks/"+keys[i],{items:byC[keys[i]]})}
+      const cats=[...newCats];if(cats.length!==CFG.cats.length){CFG.cats=cats;await upsert("settings/main",{cats})}
+    }
+  }catch(e){console.error(e);toast("នាំចូលមិនបានពេញលេញ៖ "+((e&&e.message)||"កំហុស"));btn.disabled=false;btn.textContent="នាំចូលឥឡូវនេះ";return}
+  modal("នាំចូលរួចរាល់",`<div style="font-size:1.05rem">បន្ថែមថ្មី <b>${a}</b> · ធ្វើបច្ចុប្បន្នភាព <b>${u}</b> · រំលង <b>${s}</b>${b?` · មិនបានយក <b>${b}</b> (គ្មានឈ្មោះ)`:""}</div>`,`<button class="btn ok" onclick="POS.close()">បិទ</button>`);
+  if(view==="stock")vStock();
+}
+
+/* ================= csv ================= */
+function exportCSV(name,rows){
+  const bom=String.fromCharCode(0xFEFF);
+  const text=bom+rows.map(r=>r.map(c=>{const s=String(c==null?"":c);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}).join(",")).join("\r\n");
+  if(DLN){DLN.save({filename:name,data:text}).catch(e=>{if(!e||e.code!=="declined")toast("ទាញយកមិនបាន")});return}
+  try{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type:"text/csv"}));a.download=name;document.body.appendChild(a);a.click();a.remove()}catch(e){toast("ទាញយកមិនបាន")}
+}
+
+/* ================= actions ================= */
+const POS={
+  go(v){view=v;shell()},
+  close:closeM,importUI,impPrev,impGo,
+  impPaste(){const t=$("#impt").value;if(!t.trim()){toast("សូមជ្រើសឯកសារ ឬបិទភ្ជាប់ទិន្នន័យ");return}setRows(parseText(t))},
+  retry(){const f=JOBS.failed.splice(0);f.forEach(j=>job(j.label,j.fn));paintSync()},
+  setCust(v){cust=v},
+  setCat(i){cat=i==="*"?"*":CFG.cats[i];gridN=60;vSale()},
+  more(){gridN+=120;paintGrid()},
+  add(id){addToCart(id,false)},
+  pick(id){addToCart(id,true)},
+  qty(k,d){const it=cart[k],p=PMAP.get(it.id),n=it.qty+d;if(n<=0)cart.splice(k,1);else if(!canNeg()&&p&&n>p.stock)toast("ស្តុកមិនគ្រប់៖ នៅសល់ "+stk(p.stock));else it.qty=n;paintCart()},
+  setQty(k,v){const it=cart[k],p=PMAP.get(it.id);let n=parseFloat(v);if(!(n>0))n=1;if(!canNeg()&&p&&n>p.stock){toast("ស្តុកមិនគ្រប់៖ នៅសល់ "+stk(p.stock));n=Math.max(p.stock,0)||1}it.qty=n;paintCart()},
+  del(k){cart.splice(k,1);paintCart()},
+  clear(){cart=[];disc=0;paintCart()},
+  hold(){if(!cart.length)return;const l=heldList();l.push({id:rid(),date:Date.now(),cart,disc,discType,cust});setHeld(l);cart=[];disc=0;paintTop();paintCart();toast("បានទុករង់ចាំ")},
+  held(){const l=heldList();modal("បញ្ជីរង់ចាំ",l.length?l.map(h=>`<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--line);padding:6px 0"><span>${dstr(h.date)} · ${h.cart.length} មុខ · <b class="num">${money(h.cart.reduce((a,i)=>a+i.price*i.qty,0))}</b></span><span><button class="btn ok" style="padding:4px 10px" onclick="POS.recall('${h.id}')">បើក</button> <button class="btn bad" style="padding:4px 10px" onclick="POS.dropHeld('${h.id}')">លុប</button></span></div>`).join(""):`<div class="empty">គ្មានការរង់ចាំ</div>`,`<button class="btn gh" onclick="POS.close()">បិទ</button>`)},
+  recall(id){const l=heldList(),h=l.find(x=>x.id===id);if(!h)return;if(cart.length){toast("សូមបោះបង់ ឬគិតលុយកន្ត្រកបច្ចុប្បន្នជាមុន");return}cart=h.cart;disc=h.disc;discType=h.discType;cust=h.cust;setHeld(l.filter(x=>x.id!==id));view="sale";closeM();shell()},
+  dropHeld(id){setHeld(heldList().filter(x=>x.id!==id));POS.held();paintTop()},
+  discount(){modal("បញ្ចុះតម្លៃ",`<div class="f2"><label>ប្រភេទ<select id="dt"><option value="amt" ${discType==="amt"?"selected":""}>ចំនួនទឹកប្រាក់ (៛)</option><option value="pct" ${discType==="pct"?"selected":""}>ភាគរយ (%)</option></select></label><label>តម្លៃ<input id="dv" inputmode="numeric" value="${disc}"></label></div>`,`<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.setDisc()">យល់ព្រម</button>`);setTimeout(()=>{const e=$("#dv");if(e){e.focus();e.select()}},30)},
+  setDisc(){discType=$("#dt").value;let v=Math.max(0,parseFloat($("#dv").value)||0);if(discType==="pct")v=Math.min(100,v);disc=v;closeM();paintCart()},
+  newCust(){modal("អតិថិជនថ្មី",`<label>ឈ្មោះ<input id="cn"></label><label>លេខទូរស័ព្ទ<input id="cp" inputmode="tel"></label>`,`<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.addCust()">រក្សាទុក</button>`)},
+  addCust(){const n=$("#cn").value.trim();if(!n){toast("សូមបញ្ចូលឈ្មោះ");return}const id=rid(),c={name:n,phone:$("#cp").value.trim()};CUSTS.push({id,...c});cust=id;job("អតិថិជន",()=>setDoc("customers/"+id,c));closeM();vSale()},
+  pay,
+  pm(m){pm=m;["cash","qr","card"].forEach(x=>$("#pm-"+x).classList.toggle("on",x===m));if(m!=="cash")POS.setRec(cartTotal());calc()},
+  setRec(v){$("#rec").value=v;calc()},
+  finish,
+  receipt(id,fresh){const s=findSale(id);if(!s)return;
+    modal(fresh?"ការលក់បានជោគជ័យ":"វិក្កយបត្រ",receiptHTML(s),`${s.void||!isAdmin()?"":`<button class="btn bad" onclick="POS.void('${s.id}')">លុបចោល (ត្រឡប់ស្តុក)</button>`}<button class="btn" onclick="POS.printSale('${s.id}')">🖨 បោះពុម្ព</button><button class="btn ok" onclick="POS.close()">បិទ</button>`)},
+  printSale(id){const s=findSale(id);if(s)doPrint(receiptHTML(s))},
+  testPrint(){doPrint(receiptHTML({no:"TEST-0001",date:Date.now(),cashier:SES.name,customer:"សាកល្បង",items:[{name:"ទំនិញសាកល្បង A",qty:2,price:5000,cost:0},{name:"ទំនិញសាកល្បង B",qty:1,price:2000,cost:0}],sub:12000,disc:0,total:12000,paid:20000,change:8000,method:"cash"}),1)},
+  void(id){const s=findSale(id);if(!s||s.void||!isAdmin())return;if(!confirmed("v"+id))return;
+    s.void=true;s.voidBy=SES.name;
+    job("លុបវិក្កយបត្រ",()=>upsert(`sales/${s.day}/h/${s.hh}`,{items:{[s.id]:{void:true,voidBy:SES.name,voidAt:Date.now()}}}));
+    s.items.forEach(i=>job("ស្តុក "+i.name,()=>adjStock(i.id,+i.qty)));
+    closeM();toast("បានលុបវិក្កយបត្រ ហើយត្រឡប់ស្តុក");if(view==="history")vHist();paintTop()},
+  logout(){if(cart.length&&!confirmed("lo"))return;SES=null;cart=[];loginScreen()},
+  /* shifts */
+  openShift(force){
+    if(curShift()){toast("វេនកំពុងបើករួចហើយ");return}
+    const last=SHIFTS.find(x=>x.close&&x.cashierId===SES.id);
+    modal("បើកវេនលក់",`${force?'<div style="color:var(--warn)">សូមបើកវេនសិន មុនគិតលុយ។</div>':""}
+      <label>អ្នកលក់<input value="${esc(SES.name)}" disabled></label>
+      <label>ប្រាក់ដើមក្នុងថត (៛)<input id="so-c" inputmode="numeric" value="${last?last.closeCash||0:0}"></label>
+      <div class="note">ប្រាក់ដើមត្រូវបានដាក់ពីចំនួនរាប់បាននៅពេលបិទវេនចុងក្រោយ អ្នកអាចកែបាន។</div>`,
+      `<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.openGo()">បើកវេន</button>`);
+    const e=$("#so-c");if(e){e.focus();e.select()}},
+  openGo(){const today=dkey(new Date()),n=SHIFTS.filter(x=>dkey(x.open)===today).length+1;
+    const sh={id:rid(),no:n,open:Date.now(),openCash:Math.round(num($("#so-c").value)),cashierId:SES.id,cashier:SES.name,close:null};
+    SHIFTS.unshift(sh);const {id,...d}=sh;job("វេន",()=>setDoc("shifts/"+id,d));
+    closeM();paintTop();if(view==="sale")vSale();toast("បានបើកវេន #"+n)},
+  async closeShift(){const c=curShift();if(!c)return;
+    const sales=await shiftSales(c),st=stats(sales),exp=c.openCash+st.cash;
+    modal("បិទវេន #"+c.no,`<div style="display:grid;gap:4px">
+      ${[["បើកវេនម៉ោង",dstr(c.open)],["វិក្កយបត្រ",st.n],["សាច់ប្រាក់",money(st.cash)],["QR / ABA",money(st.qr)],["កាត",money(st.card)],["សរុបលក់",money(st.total)],["ប្រាក់ដើម",money(c.openCash)],["ប្រាក់សាច់ត្រូវមានក្នុងថត",money(exp)]].map(x=>`<div class="row" style="justify-content:space-between"><span>${x[0]}</span><b class="num">${x[1]}</b></div>`).join("")}</div>
+      <label>ប្រាក់ដែលរាប់បានជាក់ស្តែង (៛)<input id="sc-c" inputmode="numeric" value="${exp}" oninput="POS.scDiff(${exp})"></label>
+      <div class="row" style="justify-content:space-between"><span>ភាពខុសគ្នា</span><b id="sc-d" style="color:var(--ok)">0៛</b></div>
+      <label>កំណត់ចំណាំ<input id="sc-n"></label>`,
+      `<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn bad" onclick="POS.closeGo()">បិទវេន</button>`);
+    const e=$("#sc-c");if(e){e.focus();e.select()}},
+  scDiff(exp){const d=Math.round(num($("#sc-c").value))-exp,e=$("#sc-d");e.textContent=(d>0?"+":"")+fmt(d)+"៛";e.style.color=d===0?"var(--ok)":d>0?"var(--warn)":"var(--bad)"},
+  async closeGo(){const c=curShift();if(!c)return;
+    const sales=await shiftSales(c),st=stats(sales),exp=c.openCash+st.cash,cnt=Math.round(num($("#sc-c").value));
+    Object.assign(c,{close:Date.now(),closeCash:cnt,expected:exp,diff:cnt-exp,note:$("#sc-n").value.trim()});
+    const {id,...d}=c;job("បិទវេន",()=>setDoc("shifts/"+id,d));
+    paintTop();if(view==="sale")vSale();
+    await POS.shiftReport(c.id);if(P().auto&&!embedded())POS.printShift(c.id)},
+  async shiftReport(id){const sh=SHIFTS.find(x=>x.id===id);if(!sh)return;const sales=await shiftSales(sh);
+    modal("របាយការណ៍វេន #"+sh.no,shiftHTML(sh,sales),`<button class="btn" onclick="POS.printShift('${sh.id}')">🖨 បោះពុម្ព</button><button class="btn ok" onclick="POS.close()">បិទ</button>`)},
+  async printShift(id){const sh=SHIFTS.find(x=>x.id===id);if(!sh)return;doPrint(shiftHTML(sh,await shiftSales(sh)),1)},
+  /* history/report */
+  histD(v){hd=v==="y"?dkey(new Date(Date.now()-864e5)):v;vHist()},
+  repP(p){rep={...rep,p,from:"",to:""};vReport()},
+  repC(){const f=$("#rf").value,t=$("#rt").value;if(!f){toast("សូមជ្រើសថ្ងៃចាប់ផ្តើម");return}rep={...rep,p:"custom",from:f,to:t||f};vReport()},
+  repDay(k){rep={...rep,p:"custom",from:k,to:k};vReport()},
+  repW(v){rep.who=v;vReport()},
+  repPrint(){const r=repRange(),w=ACCTS.find(a=>a.id===rep.who);doPrint(reportHTML(r[0].startsWith("0000")?"ទាំងអស់":(r[0]===r[1]?dk2(r[0]):dk2(r[0])+" ដល់ "+dk2(r[1])),vReport.cur||[],w&&w.name),1)},
+  repCSV(){const rows=[["លេខវិក្កយបត្រ","កាលបរិច្ឆេទ","អ្នកលក់","អតិថិជន","ទំនិញ","បង់តាម","បញ្ចុះតម្លៃ","សរុប","ស្ថានភាព"]];
+    (vReport.cur||[]).forEach(s=>rows.push([s.no,dstr(s.date),s.cashier||"",s.customer,s.items.map(i=>i.name+" x"+i.qty).join("; "),MN[s.method]||"",s.disc||0,s.total,s.void?"លុបចោល":""]));
+    exportCSV("sales-"+dkey(new Date())+".csv",rows)},
+  /* stock */
+  pg(d){stPage=Math.max(0,stPage+d);vStock()},
+  exportP(){const rows=[["Barcode","Name","Category","Cost","Price","Stock","Min"]];PRODUCTS.forEach(p=>rows.push([p.barcode,p.name,p.cat,p.cost,p.price,p.stock,p.min]));exportCSV("products-"+dkey(new Date())+".csv",rows)},
+  editP(id,bc){
+    const p=id?PMAP.get(id):{barcode:bc||"",name:"",cat:CFG.cats[0]||"",price:"",cost:"",stock:0,min:5};if(!p)return;
+    modal(id?"កែទំនិញ":"ទំនិញថ្មី",`<div class="f2"><label>បារកូដ<input id="pb" value="${esc(p.barcode)}"></label><label>ប្រភេទ<input id="pc" list="catl" value="${esc(p.cat)}"><datalist id="catl">${CFG.cats.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></label></div>
+      <label>ឈ្មោះទំនិញ<input id="pn" value="${esc(p.name)}"></label>
+      <div class="f2"><label>តម្លៃដើម (៛)<input id="pcost" inputmode="numeric" value="${p.cost}"></label><label>តម្លៃលក់ (៛)<input id="ppr" inputmode="numeric" value="${p.price}"></label></div>
+      <div class="f2"><label>ស្តុក<input id="pst" inputmode="decimal" value="${p.stock}"></label><label>ស្តុកអប្បបរមា (ជូនដំណឹង)<input id="pmn" inputmode="numeric" value="${p.min}"></label></div>`,
+      `${id?`<button class="btn bad" onclick="POS.delP('${id}')">លុប</button>`:""}<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.saveP('${id||""}')">រក្សាទុក</button>`)},
+  saveP(id){
+    const n=$("#pn").value.trim(),b=$("#pb").value.trim(),pr=parseFloat($("#ppr").value),co=parseFloat($("#pcost").value)||0,c=$("#pc").value.trim();
+    if(!n||!(pr>=0)){toast("សូមបញ្ចូលឈ្មោះ និង តម្លៃលក់");return}
+    const dup=b&&BMAP.get(b.toLowerCase());if(dup&&dup.id!==id){toast("បារកូដនេះមានរួចហើយ");return}
+    const o={id:id||rid(),barcode:b||String(Date.now()).slice(-9),name:n,cat:c,price:pr,cost:co,stock:parseFloat($("#pst").value)||0,min:parseFloat($("#pmn").value)||0};
+    if(c&&!CFG.cats.includes(c)){CFG.cats=[...CFG.cats,c];const cats=CFG.cats;job("ប្រភេទ",()=>upsert("settings/main",{cats}))}
+    saveProduct(o);closeM()},
+  delP(id){if(!confirmed("d"+id))return;const p=PMAP.get(id);cart=cart.filter(i=>i.id!==id);job("លុបទំនិញ",()=>upsert("pchunks/"+ck(id),{items:{[id]:{del:true}}}));closeM()},
+  stockIn(id){
+    modal("បញ្ចូលស្តុក",`<label>ស្វែងរកទំនិញ (ឈ្មោះ ឬបារកូដ)<input id="si-q" autocomplete="off" placeholder="វាយដើម្បីស្វែងរក"></label><div id="si-l" class="scroll" style="max-height:200px"></div>
+      <input type="hidden" id="si-id" value="${id||""}"><div id="si-n" style="font-weight:700">${id&&PMAP.get(id)?esc(PMAP.get(id).name):""}</div>
+      <div class="f2"><label>ចំនួនបញ្ចូល (ដកចេញ ប្រើ −)<input id="sq2" inputmode="decimal" value="1"></label><label>តម្លៃដើមថ្មី (៛)<input id="sc" inputmode="numeric" value="${id&&PMAP.get(id)?PMAP.get(id).cost:""}"></label></div>
+      <label>កំណត់ចំណាំ / អ្នកផ្គត់ផ្គង់<input id="sn"></label>`,`<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.saveIn()">បញ្ចូល</button>`);
+    const qi=$("#si-q");qi.addEventListener("input",()=>{const r=search(qi.value,8);$("#si-l").innerHTML=r.map(p=>`<button class="si" onclick="POS.siPick('${p.id}')"><span class="sn">${esc(p.name)}</span><span class="sb">${esc(p.barcode)}</span><span class="ss">${stk(p.stock)}</span></button>`).join("")});
+    (id?$("#sq2"):qi).focus()},
+  siPick(id){const p=PMAP.get(id);if(!p)return;$("#si-id").value=id;$("#si-n").textContent=p.name;$("#sc").value=p.cost;$("#si-l").innerHTML="";$("#sq2").focus();$("#sq2").select()},
+  saveIn(){const id=$("#si-id").value,p=PMAP.get(id),qn=parseFloat($("#sq2").value),c=parseFloat($("#sc").value)||0;
+    if(!p){toast("សូមជ្រើសទំនិញ");return}if(!qn){toast("សូមបញ្ចូលចំនួន");return}if(p.stock+qn<0&&!canNeg()){toast("ស្តុកមិនអាចតិចជាងសូន្យ");return}
+    const note=$("#sn").value.trim(),now=Date.now(),mk2=dkey(now).slice(0,7);
+    p.stock+=qn;STOCKOV[id]={v:p.stock,t:now};const sv=p.stock;
+    job("ស្តុក "+p.name,async()=>{await upsert("pchunks/"+ck(id),{items:{[id]:{stock:sv,...(qn>0&&c>0?{cost:c}:{})}}});await upsert("stockins/"+mk2,{items:{[rid()]:{date:now,pid:id,name:p.name,qty:qn,cost:c,note,by:SES.name}}})});
+    closeM();setTimeout(()=>{if(view==="stock")vStock()},50);toast("បានបញ្ចូលស្តុក")},
+  cats(){modal("ប្រភេទទំនិញ",`<div>${CFG.cats.map((c,i)=>`<div class="row" style="justify-content:space-between;padding:4px 0"><span>${esc(c)}</span><button class="x" onclick="POS.delCat(${i})">✕</button></div>`).join("")||`<div class="empty">មិនទាន់មានប្រភេទ</div>`}</div>
+    <div class="row"><input id="nc" placeholder="ឈ្មោះប្រភេទថ្មី"><button class="btn ok" onclick="POS.addCat()">បន្ថែម</button></div>`,`<button class="btn gh" onclick="POS.close()">បិទ</button>`)},
+  addCat(){const v=$("#nc").value.trim();if(!v||CFG.cats.includes(v))return;CFG.cats=[...CFG.cats,v];const cats=CFG.cats;job("ប្រភេទ",()=>upsert("settings/main",{cats}));POS.cats()},
+  delCat(i){const c=CFG.cats[i];if(PRODUCTS.some(p=>p.cat===c)){toast("មានទំនិញក្នុងប្រភេទនេះ មិនអាចលុបបានទេ");return}CFG.cats=CFG.cats.filter((_,k)=>k!==i);const cats=CFG.cats;job("ប្រភេទ",()=>upsert("settings/main",{cats}));POS.cats()},
+  delAll(){modal("លុបទំនិញទាំងអស់",`<div style="color:var(--bad);font-weight:600">សកម្មភាពនេះមិនអាចត្រឡប់វិញបានទេ។ ទំនិញទាំងអស់ ${PRODUCTS.length.toLocaleString("en-US")} មុខនឹងត្រូវលុប។</div>
+    <label style="grid-auto-flow:column;justify-content:start;align-items:center;gap:8px;color:var(--fg)"><input type="checkbox" id="da-cat" checked style="width:auto">លុបប្រភេទទំនិញផងដែរ (${CFG.cats.length})</label>`,
+    `<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn bad" onclick="POS.delAllGo()">លុបឥឡូវនេះ</button>`)},
+  async delAllGo(){
+    const wc=$("#da-cat").checked,ids=CHUNKS.slice();closeM();toast("កំពុងលុប...");
+    cart=[];disc=0;
+    await job("លុបទំនិញ",async()=>{for(const id of ids)await delDoc("pchunks/"+id);if(wc){CFG.cats=[];await upsert("settings/main",{cats:[]})}});
+    PRODUCTS=[];PMAP=new Map();BMAP=new Map();CHUNKS=[];if(wc)CFG.cats=[];
+    toast("បានលុបទំនិញទាំងអស់");draw();
+  },
+  /* settings & accounts */
+  saveSet(){
+    const d={shop:$("#s1").value.trim()||"Sethika Mart",addr:$("#sa").value.trim(),phone:$("#sp").value.trim(),rate:parseFloat($("#s2").value)||4100,footer:$("#s3").value,neg:$("#s4").value==="1",
+      print:{paper:$("#p1").value,copies:Math.max(1,Math.min(5,parseInt($("#p2").value,10)||1)),font:Math.max(8,Math.min(24,parseInt($("#p3").value,10)||12)),auto:$("#p4").value==="1"}};
+    Object.assign(CFG,d);job("ការកំណត់",()=>upsert("settings/main",d));paintTop();toast("បានរក្សាទុក")},
+  acctUI(){modal("បង្កើតគណនីថ្មី",`<label>ឈ្មោះគណនី<input id="an"></label>
+    <label>តួនាទី<select id="ar"><option value="cashier">អ្នកលក់ (លក់ + ប្រវត្តិរបស់ខ្លួន)</option><option value="admin">ម្ចាស់/អ្នកគ្រប់គ្រង (ទាំងអស់)</option></select></label>
+    <label>លេខកូដ ៤-៨ ខ្ទង់<input id="ap" type="password" inputmode="numeric"></label>`,`<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.acctGo()">បង្កើត</button>`)},
+  async acctGo(){const n=$("#an").value.trim(),pin=$("#ap").value,role=$("#ar").value;
+    if(!n){toast("សូមបញ្ចូលឈ្មោះ");return}if(!/^\d{4,8}$/.test(pin)){toast("លេខកូដត្រូវមាន ៤ ដល់ ៨ ខ្ទង់");return}
+    if(ACCTS.some(a=>(a.nameL||a.name.toLowerCase())===n.toLowerCase())){toast("ឈ្មោះនេះមានរួចហើយ");return}
+    const id=rid(),acc={name:n,nameL:n.toLowerCase(),role,pin:await pinHash(id,pin),created:Date.now()};
+    ACCTS.push({id,...acc});job("គណនី",()=>setDoc("accounts/"+id,acc));closeM();vSet();toast("បានបង្កើតគណនី")},
+  pinUI(id){const a=ACCTS.find(x=>x.id===id);if(!a)return;modal("ប្តូរលេខកូដ "+a.name,`<label>លេខកូដថ្មី ៤-៨ ខ្ទង់<input id="np" type="password" inputmode="numeric"></label>`,`<button class="btn gh" onclick="POS.close()">បោះបង់</button><button class="btn ok" onclick="POS.pinGo('${id}')">រក្សាទុក</button>`)},
+  async pinGo(id){const pin=$("#np").value;if(!/^\d{4,8}$/.test(pin)){toast("លេខកូដត្រូវមាន ៤ ដល់ ៨ ខ្ទង់");return}const h=await pinHash(id,pin);const a=ACCTS.find(x=>x.id===id);if(a)a.pin=h;job("លេខកូដ",()=>upsert("accounts/"+id,{pin:h}));closeM();toast("បានប្តូរលេខកូដ")},
+  delAcct(id){const a=ACCTS.find(x=>x.id===id);if(!a)return;if(a.role==="admin"&&ACCTS.filter(x=>x.role==="admin").length<2){toast("មិនអាចលុបអ្នកគ្រប់គ្រងចុងក្រោយបានទេ");return}
+    if(!confirmed("da"+id))return;ACCTS=ACCTS.filter(x=>x.id!==id);job("លុបគណនី",()=>delDoc("accounts/"+id));vSet()}
+};
+window.POS=POS;
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&$("#ov"))closeM();
+  if(view==="sale"&&SES&&!$("#ov")&&e.key.length===1&&!e.ctrlKey&&!e.metaKey&&!e.altKey){const a=document.activeElement;if(!a||!/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)){const s=$("#scan");if(s)s.focus()}}
+  if(e.key==="F9"&&view==="sale"&&SES&&!$("#ov")){e.preventDefault();pay()}
+});
+
+/* ================= boot ================= */
+function afterLoad(){if(booted)return;booted=true;clearTimeout(bootT);if(!SES)loginScreen()}
+let bootT=0;
+(async function boot(){
+  let ns=null;
+  try{if(window.claude&&claude.use)ns=await Promise.race([claude.use("db"),sleep(10000).then(()=>null)])}catch(e){}
+  if(ns){DBN=ns;MODE="shared"}else{DBN=LocalDB("sethika_ldb_v2");MODE="local"}
+  try{if(window.claude&&claude.use){DLN=await claude.use("downloads");const u=await claude.use("user");if(u)CANW=await u.can("data.write")}}catch(e){}
+  bootT=setTimeout(afterLoad,10000);
+  startSubs();
+})();
+})();
+</script>
+</body>
+</html>
