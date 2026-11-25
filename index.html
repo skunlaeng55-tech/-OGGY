@@ -131,6 +131,21 @@ label{font-size:.85rem;color:var(--muted);display:grid;gap:3px}
 <div class="app" id="app"><div class="login"><div class="lcard"><h1>Sethika POS</h1><div class="sub">កំពុងផ្ទុក...</div></div></div></div>
 <div id="layer"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* ===== បិទភ្ជាប់ firebaseConfig របស់អ្នកនៅទីនេះ (ពី Firebase Console) =====
+   បើទុកទទេ កម្មវិធីនឹងរក្សាទុកក្នុងឧបករណ៍នីមួយៗតែប៉ុណ្ណោះ */
+window.FIREBASE_CONFIG = {
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
+};
+</script>
 <script>
 (function(){
 "use strict";
@@ -276,9 +291,9 @@ function stats(list){
 
 /* ================= subscriptions ================= */
 const READY=new Set(),NEED=["settings","accts","prods","custs","shifts","dayidx","today"];
-let booted=false,unToday=null,rt=0;
+let booted=false,unToday=null,rt=0;const UNSUBS=[];let BASE=null,SHOP="",PENDING=null;
 function mark(t){READY.add(t);if(!booted&&NEED.every(x=>READY.has(x)))afterLoad()}
-function sub(tag,ref,fn){return ref.onSnapshot(s=>{try{fn(s)}catch(e){console.error(tag,e)}mark(tag);refreshSoon()},e=>{console.error(tag,e);mark(tag)})}
+function sub(tag,ref,fn){const u=ref.onSnapshot(s=>{try{fn(s)}catch(e){console.error(tag,e)}mark(tag);refreshSoon()},e=>{console.error(tag,e);mark(tag)});UNSUBS.push(u);return u}
 function startSubs(){
   sub("settings",DBN.doc("settings/main"),s=>{const d=s.exists?s.data():{};CFG={...DEF,...d,print:{...DEF.print,...(d.print||{})},cats:Array.isArray(d.cats)?d.cats.slice():[]}});
   sub("accts",DBN.collection("accounts"),s=>{ACCTS=s.docs.map(d=>({id:d.id,...d.data()}))});
@@ -325,6 +340,8 @@ function loginScreen(){
     ${none?`<label>បញ្ជាក់លេខកូដម្តងទៀត<input id="lp2" type="password" inputmode="numeric" placeholder="••••"></label>`:""}
     <button class="btn ok" type="submit" style="padding:14px;font-size:1.05rem">${none?"បង្កើតគណនី និងចូល":"ចូល"}</button>
     <div class="note ${MODE==="shared"?"":"w"}">${MODE==="shared"?"☁ ទិន្នន័យចែករំលែករវាងទូរសព្ទ និងកុំព្យូទ័រ។ ចូលដោយឈ្មោះ និងលេខកូដដូចគ្នានៅគ្រប់ឧបករណ៍។":"💾 ទិន្នន័យនៅក្នុងឧបករណ៍នេះតែប៉ុណ្ណោះ (មិនចែករំលែកជាមួយឧបករណ៍ផ្សេង)។"}</div>
+    <div class="row" style="justify-content:center;flex-wrap:wrap"><button type="button" class="btn gh" onclick="POS.gate('in')">ចូលគណនីហាងផ្សេង</button><button type="button" class="btn gh" onclick="POS.gate('new')">បង្កើតគណនីថ្មី</button></div>
+    <div class="sub" style="margin-top:0">កូដគណនីហាង៖ <b>${esc(SHOP)}</b></div>
     ${CANW===false?`<div class="note w">គណនី Claude របស់អ្នកមិនអាចកែទិន្នន័យចែករំលែកបានទេ។ សូមឱ្យម្ចាស់ផ្តល់សិទ្ធិ Contributor ឬខ្ពស់ជាង។</div>`:""}
   </form></div>`;
   $("#lf").addEventListener("submit",e=>{e.preventDefault();none?doSetup():doLogin()});
@@ -690,7 +707,7 @@ function vSet(){
   <div class="pane"><h3>គណនីអ្នកប្រើប្រាស់</h3><div class="scroll"><table><thead><tr><th>ឈ្មោះ</th><th>តួនាទី</th><th></th></tr></thead><tbody>
   ${ACCTS.map(a=>`<tr><td>${esc(a.name)}${a.id===SES.id?" (អ្នក)":""}</td><td>${a.role==="admin"?"ម្ចាស់/អ្នកគ្រប់គ្រង":"អ្នកលក់"}</td><td class="r" style="white-space:nowrap"><button class="btn gh" style="padding:4px 10px" onclick="POS.pinUI('${a.id}')">ប្តូរលេខកូដ</button> ${a.id===SES.id?"":`<button class="btn bad" style="padding:4px 10px" onclick="POS.delAcct('${a.id}')">លុប</button>`}</td></tr>`).join("")}
   </tbody></table></div><div class="bar" style="padding:12px"><button class="btn ok" onclick="POS.acctUI()">+ បង្កើតគណនីថ្មី</button></div></div>
-  <div class="pane"><h3>ទិន្នន័យ</h3><div class="mb"><div class="note ${MODE==="shared"?"":"w"}">${MODE==="shared"?"☁ ទិន្នន័យត្រូវបានរក្សាទុកដោយស្វ័យប្រវត្តិ ហើយចែករំលែករវាងឧបករណ៍ទាំងអស់ដែលចូលដោយគណនីរបស់អ្នក។":"💾 ទិន្នន័យនៅក្នុងកម្មវិធីរុករកនេះតែប៉ុណ្ណោះ។"}</div>
+  <div class="pane"><h3>ទិន្នន័យ</h3><div class="mb"><div class="note ${MODE==="shared"?"":"w"}">${MODE==="shared"?"☁ ទិន្នន័យត្រូវបានរក្សាទុកដោយស្វ័យប្រវត្តិ ហើយចែករំលែករវាងឧបករណ៍ទាំងអស់ដែលចូលដោយគណនីរបស់អ្នក។":"💾 ទិន្នន័យនៅក្នុងកម្មវិធីរុករកនេះតែប៉ុណ្ណោះ។"}</div><div class="note">កូដគណនីហាង៖ <b>${esc(SHOP)}</b> — ប្រើកូដនេះ ជាមួយឈ្មោះគណនី និងលេខកូដ ដើម្បីចូលទទួលទិន្នន័យដដែលពីឧបករណ៍ណាក៏បាន។</div>
   <div class="bar"><button class="btn ok" onclick="POS.importUI()">⬆ នាំចូលពីកម្មវិធីចាស់</button><button class="btn bad" onclick="POS.delAll()">🗑 លុបទំនិញទាំងអស់</button></div></div></div></div>`;
 }
 
@@ -821,6 +838,7 @@ function exportCSV(name,rows){
 const POS={
   go(v){view=v;shell()},
   close:closeM,importUI,impPrev,impGo,
+  gate(m){if(JOBS.pending){toast("កំពុងរក្សាទុក សូមរង់ចាំបន្តិច");return}if(cart.length&&!confirmed("gt"))return;stopSubs();SES=null;cart=[];disc=0;cust="";DBN=null;gateScreen(m)},
   impPaste(){const t=$("#impt").value;if(!t.trim()){toast("សូមជ្រើសឯកសារ ឬបិទភ្ជាប់ទិន្នន័យ");return}setRows(parseText(t))},
   retry(){const f=JOBS.failed.splice(0);f.forEach(j=>job(j.label,j.fn));paintSync()},
   setCust(v){cust=v},
@@ -968,16 +986,114 @@ document.addEventListener("keydown",e=>{
   if(e.key==="F9"&&view==="sale"&&SES&&!$("#ov")){e.preventDefault();pay()}
 });
 
+/* ================= Firestore adapter (same API as LocalDB) ================= */
+function FireDB(fs){
+  const wrap=ref=>({id:ref.id,path:ref.path,
+    get:()=>ref.get(),
+    set:d=>ref.set(d),
+    update:d=>ref.set(d,{merge:true}),
+    delete:()=>ref.delete(),
+    onSnapshot:(n,e)=>ref.onSnapshot(n,e),
+    collection:p=>wrapC(ref.collection(p))});
+  const wrapQ=q=>({
+    where:(f,o,v)=>wrapQ(q.where(f,o,v)),
+    orderBy:(f,d)=>wrapQ(q.orderBy(f,d||"asc")),
+    limit:n=>wrapQ(q.limit(n)),
+    get:()=>q.get(),
+    onSnapshot:(n,e)=>q.onSnapshot(n,e)});
+  const wrapC=c=>Object.assign(wrapQ(c),{path:c.path,doc:id=>wrap(id?c.doc(id):c.doc()),add:d=>c.add(d)});
+  return{doc:p=>wrap(fs.doc(p)),collection:p=>wrapC(fs.collection(p))};
+}
+
+/* ================= shop gate (create / sign in to account) ================= */
+const prefixDB=(db,root)=>({doc:x=>db.doc(root+x),collection:x=>db.collection(root+x)});
+const normCode=v=>String(v||"").trim().toLowerCase();
+const codeOk=c=>/^[a-z0-9_-]{3,30}$/.test(c);
+function stopSubs(){
+  UNSUBS.splice(0).forEach(f=>{try{f()}catch(e){}});unToday=null;READY.clear();booted=false;
+  CFG={...DEF,print:{...DEF.print},cats:[]};PRODUCTS=[];PMAP=new Map();BMAP=new Map();CHUNKS=[];STOCKOV={};
+  ACCTS=[];CUSTS=[];SHIFTS=[];DAYIDX=new Set();TODAY={day:"",sales:[]};DAYC={};INS=[];
+}
+function enterShop(code,pending){
+  stopSubs();SHOP=code;DBN=prefixDB(BASE,"shops/"+code+"/");PENDING=pending||null;
+  try{localStorage.setItem("sethika_shop",code)}catch(e){}
+  $("#app").innerHTML='<div class="login"><div class="lcard"><h1>Sethika POS</h1><div class="sub">កំពុងផ្ទុកទិន្នន័យ...</div></div></div>';
+  clearTimeout(bootT);bootT=setTimeout(afterLoad,10000);
+  startSubs();
+}
+function gateScreen(mode){
+  const g=k=>{try{return localStorage.getItem(k)||""}catch(e){return""}};
+  const lastS=g("sethika_shop"),lastU=g("sethika_last");
+  const note=`<div class="note ${MODE==="shared"?"":"w"}">${MODE==="shared"?"☁ ទិន្នន័យរក្សាទុកលើអ៊ីនធឺណិត ចូលពីឧបករណ៍ណាក៏បាន ដោយប្រើកូដហាង ឈ្មោះគណនី និងលេខកូដដូចគ្នា។":"💾 ទិន្នន័យនៅក្នុងឧបករណ៍នេះតែប៉ុណ្ណោះ (មិនទាន់ភ្ជាប់ Firebase)។"}</div>`;
+  if(!mode){
+    $("#app").innerHTML=`<div class="login"><div class="lcard"><h1>Sethika POS</h1><div class="sub">សូមជ្រើសរើស</div>
+      <button class="btn ok" style="padding:16px;font-size:1.05rem" onclick="POS.gate('in')">ចូលគណនីដែលមានស្រាប់</button>
+      <button class="btn" style="padding:16px;font-size:1.05rem" onclick="POS.gate('new')">បង្កើតគណនីថ្មី</button>${note}</div></div>`;return}
+  const nw=mode==="new";
+  $("#app").innerHTML=`<div class="login"><form class="lcard" id="gf" autocomplete="off">
+    <h1>${nw?"បង្កើតគណនីថ្មី":"ចូលគណនីដែលមានស្រាប់"}</h1>
+    <div class="sub">${nw?"បង្កើតហាងថ្មី (ទិន្នន័យទទេ)":"ទទួលបានទិន្នន័យទាំងអស់ដែលបានធ្វើពីមុន"}</div>
+    <label>កូដគណនីហាង (a-z, 0-9, - _ យ៉ាងតិច ៣ តួ)<input id="gc" value="${nw?"":esc(lastS)}" autocapitalize="none" autocomplete="off" placeholder="ឧ. sethika-mart"></label>
+    ${nw?'<label>ឈ្មោះហាង (បង្ហាញលើវិក្កយបត្រ)<input id="gs" placeholder="ឧ. Sethika Mart"></label>':""}
+    <label>${nw?"ឈ្មោះគណនីម្ចាស់ហាង":"ឈ្មោះគណនី"}<input id="gn" value="${nw?"":esc(lastU)}" autocomplete="username"></label>
+    <label>លេខកូដ (PIN)<input id="gp" type="password" inputmode="numeric" autocomplete="current-password" placeholder="••••"></label>
+    ${nw?'<label>បញ្ជាក់លេខកូដម្តងទៀត<input id="gp2" type="password" inputmode="numeric" placeholder="••••"></label>':""}
+    <button class="btn ok" type="submit" style="padding:14px;font-size:1.05rem">${nw?"បង្កើតគណនី និងចូល":"ចូល"}</button>
+    <button class="btn gh" type="button" onclick="POS.gate()">‹ ត្រឡប់ក្រោយ</button>${note}</form></div>`;
+  let busy=false;
+  $("#gf").addEventListener("submit",async e=>{e.preventDefault();if(busy)return;busy=true;try{await(nw?gateNew():gateIn())}finally{busy=false}});
+  setTimeout(()=>{const f=$("#gc");if(f&&!f.value)f.focus();else{const n=$("#gn");if(n)n.focus()}},50);
+}
+async function gateIn(){
+  if(Date.now()<lockUntil){toast("សូមរង់ចាំបន្តិច មុនសាកល្បងម្តងទៀត");return}
+  const code=normCode($("#gc").value),name=$("#gn").value.trim().toLowerCase(),pin=$("#gp").value;
+  if(!codeOk(code)){toast("កូដគណនីហាងមិនត្រឹមត្រូវ (a-z 0-9 - _ យ៉ាងតិច ៣ តួ)");return}
+  if(!name||!pin){toast("សូមបញ្ចូលឈ្មោះគណនី និងលេខកូដ");return}
+  let list;
+  try{const snap=await prefixDB(BASE,"shops/"+code+"/").collection("accounts").get();list=snap.docs.map(d=>({id:d.id,...d.data()}))}
+  catch(e){console.error(e);toast("ភ្ជាប់មិនបាន សូមពិនិត្យអ៊ីនធឺណិត ឬ Firebase");return}
+  const a=list.find(x=>(x.nameL||String(x.name).toLowerCase())===name);
+  const ok=a&&(await pinHash(a.id,pin))===a.pin;
+  if(!ok){fails++;if(fails>=5){lockUntil=Date.now()+15000;fails=0;toast("ខុសច្រើនពេក សូមរង់ចាំ ១៥ វិនាទី")}else toast(list.length?"ឈ្មោះ ឬលេខកូដមិនត្រឹមត្រូវ":"រកមិនឃើញគណនីហាងនេះទេ");beep(false);return}
+  fails=0;try{localStorage.setItem("sethika_last",a.name)}catch(e){}
+  enterShop(code,a);
+}
+async function gateNew(){
+  const code=normCode($("#gc").value),shop=$("#gs").value.trim(),n=$("#gn").value.trim(),p1=$("#gp").value,p2=$("#gp2").value;
+  if(!codeOk(code)){toast("កូដគណនីហាងមិនត្រឹមត្រូវ (a-z 0-9 - _ យ៉ាងតិច ៣ តួ)");return}
+  if(!n){toast("សូមបញ្ចូលឈ្មោះគណនី");return}
+  if(!/^\d{4,8}$/.test(p1)){toast("លេខកូដត្រូវមាន ៤ ដល់ ៨ ខ្ទង់");return}
+  if(p1!==p2){toast("លេខកូដទាំងពីរមិនដូចគ្នា");return}
+  const reg=BASE.doc("shops/"+code);
+  try{
+    const ex=await reg.get();if(ex.exists){toast("កូដគណនីហាងនេះមានគេប្រើរួចហើយ សូមជ្រើសកូដផ្សេង");return}
+    const id=rid(),acc={name:n,nameL:n.toLowerCase(),role:"admin",pin:await pinHash(id,p1),created:Date.now()};
+    const db=prefixDB(BASE,"shops/"+code+"/");
+    await reg.set({code,created:Date.now()});
+    await db.doc("accounts/"+id).set(acc);
+    await db.doc("settings/main").set({shop:shop||"Sethika Mart"});
+    try{localStorage.setItem("sethika_last",n)}catch(e){}
+    enterShop(code,{id,...acc});
+  }catch(e){console.error(e);toast("បង្កើតមិនបាន៖ គ្មានសិទ្ធិកែទិន្នន័យ ឬគ្មានអ៊ីនធឺណិត")}
+}
+
 /* ================= boot ================= */
-function afterLoad(){if(booted)return;booted=true;clearTimeout(bootT);if(!SES)loginScreen()}
+function afterLoad(){if(booted)return;booted=true;clearTimeout(bootT);if(PENDING){const a=PENDING;PENDING=null;enter(a);return}if(!SES)loginScreen()}
 let bootT=0;
 (async function boot(){
+  let FB=null;
+  try{const c=window.FIREBASE_CONFIG;if(c&&c.apiKey&&c.projectId&&window.firebase){
+    firebase.initializeApp(c);const fs=firebase.firestore();
+    try{fs.enablePersistence({synchronizeTabs:true}).catch(()=>{})}catch(e){}
+    try{await Promise.race([firebase.auth().signInAnonymously(),sleep(6000)])}catch(e){}
+    FB=FireDB(fs)}}catch(e){console.error("firebase",e)}
   let ns=null;
-  try{if(window.claude&&claude.use)ns=await Promise.race([claude.use("db"),sleep(10000).then(()=>null)])}catch(e){}
-  if(ns){DBN=ns;MODE="shared"}else{DBN=LocalDB("sethika_ldb_v2");MODE="local"}
+  try{if(!FB&&window.claude&&claude.use)ns=await Promise.race([claude.use("db"),sleep(10000).then(()=>null)])}catch(e){}
+  if(FB){DBN=FB;MODE="shared"}else if(ns){DBN=ns;MODE="shared"}else{DBN=LocalDB("sethika_ldb_v2");MODE="local"}
   try{if(window.claude&&claude.use){DLN=await claude.use("downloads");const u=await claude.use("user");if(u)CANW=await u.can("data.write")}}catch(e){}
-  bootT=setTimeout(afterLoad,10000);
-  startSubs();
+  BASE=DBN;DBN=null;
+  let last="";try{last=localStorage.getItem("sethika_shop")||""}catch(e){}
+  if(last)enterShop(last);else gateScreen();
 })();
 })();
 </script>
